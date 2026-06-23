@@ -264,7 +264,149 @@ async function postResult(data) {
 }
 
 // ── Signing logic (implemented in Task 6) ─────────────────────────────────
-async function onConnect() { /* replaced in Task 6 */ }
+function showError(msg) {
+  setState('error');
+  document.getElementById('error-msg').textContent = msg;
+}
+
+async function onConnect() {
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  try {
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const account = accounts[0];
+    const currentChainHex = await window.ethereum.request({ method: 'eth_chainId' });
+    if (parseInt(currentChainHex, 16) !== REQUEST.chainId) {
+      setState('wrong-chain');
+      btn.textContent = \`Switch to \${(CHAIN_META[REQUEST.chainId] || {}).name || 'required chain'}\`;
+      btn.disabled = false;
+      btn.onclick = () => switchChain(account);
+      return;
+    }
+    await sign(account);
+  } catch (e) {
+    showError(e.message || String(e));
+  }
+}
+
+async function switchChain(account) {
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  try {
+    await window.ethereum.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: hex(REQUEST.chainId) }],
+    });
+  } catch (err) {
+    if (err.code === 4902) {
+      const meta = CHAIN_META[REQUEST.chainId];
+      if (!meta?.rpc) { showError('Unknown chain — add it manually in your wallet.'); return; }
+      try {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [{
+            chainId: hex(REQUEST.chainId),
+            chainName: meta.name,
+            nativeCurrency: { name: meta.symbol, symbol: meta.symbol, decimals: 18 },
+            rpcUrls: [meta.rpc],
+            blockExplorerUrls: meta.explorer ? [meta.explorer] : [],
+          }],
+        });
+      } catch (addErr) {
+        showError(addErr.message || 'Failed to add chain');
+        return;
+      }
+    } else {
+      showError(err.message || 'Chain switch failed');
+      return;
+    }
+  }
+  await sign(account);
+}
+
+async function buildTx(account) {
+  const tx = {
+    type: '0x2',
+    from: account,
+    chainId: hex(REQUEST.chainId),
+    value: REQUEST.value || '0x0',
+  };
+  if (REQUEST.to)   tx.to   = REQUEST.to;
+  if (REQUEST.data) tx.data = REQUEST.data;
+
+  // Gas limit
+  if (REQUEST.gas) {
+    tx.gas = REQUEST.gas;
+  } else {
+    const est = await window.ethereum.request({ method: 'eth_estimateGas', params: [tx] });
+    tx.gas = hex(Math.ceil(parseInt(est, 16) * 1.2));
+  }
+
+  // EIP-1559 fees
+  if (REQUEST.maxFeePerGas && REQUEST.maxPriorityFeePerGas) {
+    tx.maxFeePerGas = REQUEST.maxFeePerGas;
+    tx.maxPriorityFeePerGas = REQUEST.maxPriorityFeePerGas;
+  } else {
+    const [priorityFeeHex, block] = await Promise.all([
+      window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' }),
+      window.ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] }),
+    ]);
+    const priorityFee = BigInt(priorityFeeHex);
+    const baseFee     = BigInt(block.baseFeePerGas);
+    tx.maxPriorityFeePerGas = hex(priorityFee);
+    tx.maxFeePerGas         = hex(baseFee * 2n + priorityFee);
+  }
+  return tx;
+}
+
+async function sign(account) {
+  const btn = document.getElementById('btn');
+  setState('waiting');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Check your wallet…';
+
+  try {
+    let result;
+    if (REQUEST._type === 'signTypedData') {
+      const sig = await window.ethereum.request({
+        method: 'eth_signTypedData_v4',
+        params: [account, JSON.stringify(REQUEST.typedData)],
+      });
+      result = { signature: sig, chainId: REQUEST.chainId };
+
+    } else if (REQUEST._type === 'personalSign') {
+      const msgHex = '0x' + Array.from(new TextEncoder().encode(REQUEST.message))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+      const sig = await window.ethereum.request({
+        method: 'personal_sign',
+        params: [msgHex, account],
+      });
+      result = { signature: sig, chainId: REQUEST.chainId };
+
+    } else {
+      const tx   = await buildTx(account);
+      const hash = await window.ethereum.request({ method: 'eth_sendTransaction', params: [tx] });
+      result = { hash, chainId: REQUEST.chainId };
+    }
+
+    await postResult(result);
+    setState('done');
+
+    const doneMsg = document.getElementById('done-msg');
+    if (result.hash) {
+      const meta        = CHAIN_META[REQUEST.chainId];
+      const explorerUrl = meta?.explorer ? \`\${meta.explorer}/tx/\${result.hash}\` : null;
+      doneMsg.innerHTML = explorerUrl
+        ? \`Transaction: <a class="hash-link" href="\${explorerUrl}" target="_blank">\${result.hash}</a>\`
+        : \`Transaction: \${result.hash}\`;
+    } else {
+      doneMsg.textContent = \`Signature: \${result.signature}\`;
+    }
+
+  } catch (e) {
+    showError(e.message || String(e));
+  }
+}
 
 // ── Calldata decoding (implemented in Task 7) ─────────────────────────────
 async function initDecoding() { /* replaced in Task 7 */ }
