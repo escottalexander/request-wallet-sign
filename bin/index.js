@@ -409,7 +409,92 @@ async function sign(account) {
 }
 
 // ── Calldata decoding (implemented in Task 7) ─────────────────────────────
-async function initDecoding() { /* replaced in Task 7 */ }
+
+// Manual ABI decoder for fixed-size slot types.
+// Covers the most common parameter types (address, uint*, bool, bytes32).
+// Dynamic types (string, bytes[], tuples) fall back to "(complex type)".
+function decodeSlot(type, slot) {
+  if (type === 'address')                  return '0x' + slot.slice(-40);
+  if (/^u?int(\d+)?$/.test(type)) {
+    try { return BigInt('0x' + slot).toString(); } catch { return '0x' + slot; }
+  }
+  if (type === 'bool')                     return slot.endsWith('1') ? 'true' : 'false';
+  if (/^bytes(\d+)?$/.test(type))         return '0x' + slot;
+  return '(complex type)';
+}
+
+function decodeCalldata(hexData, sig) {
+  const match = sig.match(/^\w+\((.*)\)$/);
+  if (!match) return null;
+  const types = match[1].split(',').map(t => t.trim()).filter(Boolean);
+  if (types.length === 0) return { params: [] };
+  const payload = hexData.slice(10); // strip 0x + 4-byte selector
+  return {
+    params: types.map((type, i) => {
+      const slot = payload.slice(i * 64, i * 64 + 64);
+      return { type, value: slot && slot.length === 64 ? decodeSlot(type, slot) : '?' };
+    }),
+  };
+}
+
+async function initDecoding() {
+  const decodeEl = document.getElementById('decode');
+  if (!decodeEl) return;
+
+  const { data, to } = REQUEST;
+
+  // Contract deployment — no 'to', just show bytecode size
+  if (!to && data && data.length > 2) {
+    const bytes = Math.floor((data.length - 2) / 2);
+    decodeEl.style.display = 'block';
+    decodeEl.innerHTML = \`<div class="decode-title">Contract deployment</div>
+      <div class="decode-row">
+        <span class="decode-key">Bytecode</span>
+        <span class="decode-val">\${bytes} bytes</span>
+      </div>\`;
+    return;
+  }
+
+  // Need at least a 4-byte selector (0x + 8 hex chars = 10 chars total)
+  if (!data || data.length < 10) return;
+
+  const selector = data.slice(2, 10); // 8 hex chars, no 0x prefix
+
+  try {
+    const { loaders } = await import('https://esm.sh/@shazow/whatsabi');
+    const sigLoader = new loaders.SigHashLoader();
+    const fns = await sigLoader.loadFunctions(selector);
+
+    if (!fns || fns.length === 0) {
+      decodeEl.style.display = 'block';
+      decodeEl.innerHTML = \`<div class="decode-title">Unknown function</div>
+        <div class="decode-row">
+          <span class="decode-key">Selector</span>
+          <span class="decode-val">0x\${selector}</span>
+        </div>\`;
+      return;
+    }
+
+    // fns[0] may be a string like "transfer(address,uint256)" or an object with a name property
+    const sig = typeof fns[0] === 'string' ? fns[0] : (fns[0].name || JSON.stringify(fns[0]));
+    const decoded = decodeCalldata(data, sig);
+
+    decodeEl.style.display = 'block';
+    let inner = \`<div class="decode-title">Calling: \${sig}</div>\`;
+    if (decoded?.params.length) {
+      inner += decoded.params
+        .map(p => \`<div class="decode-row">
+          <span class="decode-key">\${p.type}</span>
+          <span class="decode-val">\${p.value}</span>
+        </div>\`)
+        .join('');
+    }
+    decodeEl.innerHTML = inner;
+
+  } catch {
+    // whatsabi CDN unavailable or lookup failed — skip decoding silently
+  }
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!window.ethereum) {

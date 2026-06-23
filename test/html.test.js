@@ -101,3 +101,25 @@ test('HTML uses type 0x2 for EIP-1559 transactions', () => {
   const html = buildHtml(makeReq(), 3000);
   assert.ok(html.includes("'0x2'") || html.includes('"0x2"'));
 });
+
+test('HTML imports whatsabi from esm.sh CDN', () => {
+  const html = buildHtml(makeReq({ data: '0xa9059cbb0000' }), 3000);
+  assert.ok(html.includes('esm.sh'));
+  assert.ok(html.includes('@shazow/whatsabi'));
+});
+
+test('HTML handles contract deployment with no to address', () => {
+  const req = parseRequest(['n', 's', JSON.stringify({ chainId: 1, data: '0x6080604052' })]);
+  const html = buildHtml(req, 3000);
+  assert.ok(html.includes('deployment') || html.includes('bytes'));
+});
+
+test('HTML contains decodeCalldata function', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes('decodeCalldata'));
+});
+
+test('HTML contains decodeSlot function for ABI decoding', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes('decodeSlot'));
+});
