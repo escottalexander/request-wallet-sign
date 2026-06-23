@@ -115,3 +115,75 @@ export function openBrowser(url) {
     'xdg-open';
   spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
 }
+
+// ── HTML builder stub ─────────────────────────────────────────────────────────
+// Replaced in full in Task 5. Minimal placeholder so run() can start the server.
+
+export function buildHtml(req, port) {
+  return `<!DOCTYPE html><html><body>
+    <p>Loading…</p>
+    <script>
+      const RESULT_URL = 'http://localhost:${port}/result';
+      const REQUEST = ${JSON.stringify(req)};
+    </script>
+  </body></html>`;
+}
+
+// HTML-escape helper (used by the full template in Task 5)
+export function escHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ── Main orchestration ────────────────────────────────────────────────────────
+
+const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+export async function run(argv) {
+  let req;
+  try {
+    req = parseRequest(argv);
+  } catch (e) {
+    process.stderr.write(e.message + '\n');
+    process.exit(1);
+  }
+
+  const port = await findAvailablePort();
+  const html = buildHtml(req, port);
+  const { result, close } = startServer(port, html);
+
+  const timeout = setTimeout(() => {
+    close();
+    process.stderr.write('timeout: user did not respond\n');
+    process.exit(1);
+  }, TIMEOUT_MS);
+
+  openBrowser(`http://localhost:${port}`);
+
+  result
+    .then(data => {
+      clearTimeout(timeout);
+      close();
+      process.stdout.write(JSON.stringify(data) + '\n');
+      process.exit(0);
+    })
+    .catch(e => {
+      clearTimeout(timeout);
+      close();
+      process.stderr.write((e.message ?? String(e)) + '\n');
+      process.exit(1);
+    });
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+// Only execute when run directly (not when imported by tests).
+
+const isMain = process.argv[1] &&
+  new URL(import.meta.url).pathname === process.argv[1];
+
+if (isMain) {
+  run(process.argv);
+}
