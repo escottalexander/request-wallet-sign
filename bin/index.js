@@ -77,6 +77,7 @@ export function startServer(port, html) {
         if (body.length > maxBodySize) {
           res.writeHead(413, { 'Content-Type': 'application/json' });
           res.end('{"error":"body too large"}');
+          req.destroy();
           rejectResult(new Error('result body too large'));
         }
       });
@@ -243,7 +244,7 @@ function renderSummary() {
     rows.push(['To', REQUEST.to ? trunc(REQUEST.to) : 'Contract deployment']);
     const val = BigInt(REQUEST.value || '0x0');
     if (val > 0n) rows.push(['Value', \`\${val} wei\`]);
-    if (REQUEST.gas) rows.push(['Gas limit', parseInt(REQUEST.gas, 16).toLocaleString()]);
+    if (REQUEST.gas) rows.push(['Gas limit', Number(BigInt(REQUEST.gas)).toLocaleString()]);
   } else if (REQUEST._type === 'signTypedData') {
     rows.push(['Type', REQUEST.typedData?.primaryType || '—']);
   } else {
@@ -276,7 +277,7 @@ async function onConnect() {
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     const account = accounts[0];
     const currentChainHex = await window.ethereum.request({ method: 'eth_chainId' });
-    if (parseInt(currentChainHex, 16) !== REQUEST.chainId) {
+    if (Number(currentChainHex) !== REQUEST.chainId) {
       setState('wrong-chain');
       btn.textContent = \`Switch to \${(CHAIN_META[REQUEST.chainId] || {}).name || 'required chain'}\`;
       btn.disabled = false;
@@ -339,7 +340,7 @@ async function buildTx(account) {
     tx.gas = REQUEST.gas;
   } else {
     const est = await window.ethereum.request({ method: 'eth_estimateGas', params: [tx] });
-    tx.gas = hex(Math.ceil(parseInt(est, 16) * 1.2));
+    tx.gas = hex(Math.ceil(Number(est) * 1.2));
   }
 
   // EIP-1559 fees
@@ -477,10 +478,11 @@ async function initDecoding() {
 
     // fns[0] may be a string like "transfer(address,uint256)" or an object with a name property
     const sig = typeof fns[0] === 'string' ? fns[0] : (fns[0].name || JSON.stringify(fns[0]));
+    const safeSig = sig.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const decoded = decodeCalldata(data, sig);
 
     decodeEl.style.display = 'block';
-    let inner = \`<div class="decode-title">Calling: \${sig}</div>\`;
+    let inner = \`<div class="decode-title">Calling: \${safeSig}</div>\`;
     if (decoded?.params.length) {
       inner += decoded.params
         .map(p => \`<div class="decode-row">
