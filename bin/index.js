@@ -71,14 +71,24 @@ export function startServer(port, html) {
       res.end(html);
     } else if (req.method === 'POST' && req.url === '/result') {
       let body = '';
-      req.on('data', chunk => { body += chunk; });
+      const maxBodySize = 64 * 1024; // 64KB limit
+      req.on('data', chunk => {
+        body += chunk;
+        if (body.length > maxBodySize) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end('{"error":"body too large"}');
+          rejectResult(new Error('result body too large'));
+        }
+      });
       req.on('end', () => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end('{"ok":true}');
-        try {
-          resolveResult(JSON.parse(body));
-        } catch (e) {
-          rejectResult(new Error(`Bad result payload: ${e.message}`));
+        if (body.length <= maxBodySize) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"ok":true}');
+          try {
+            resolveResult(JSON.parse(body));
+          } catch (e) {
+            rejectResult(new Error(`Bad result payload: ${e.message}`));
+          }
         }
       });
     } else {
@@ -88,6 +98,9 @@ export function startServer(port, html) {
   });
 
   server.listen(port, '127.0.0.1');
+  server.on('error', (err) => {
+    rejectResult(err);
+  });
   return { result, close: () => server.close() };
 }
 
