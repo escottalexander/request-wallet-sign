@@ -915,18 +915,24 @@ export const HELP_TEXT = `agent-wallet-signer — surface a wallet signing reque
 
 USAGE
   npx agent-wallet-signer [--tunnel] '<request JSON>'
+  npx agent-wallet-signer --stop-tunnel
 
 OPTIONS
-  --tunnel    Expose the signing page over a public HTTPS URL (Cloudflare quick
-              tunnel, auto-installed via npx — no account needed).
-              ► REQUIRED to sign on ANOTHER DEVICE (phone, tablet, other computer).
-              Mobile wallet browsers only inject a provider over HTTPS, so the
-              default http://localhost / http://LAN-IP address will NOT work on
-              another device. Without this flag the page is local-only.
-  --help, -h  Show this help.
+  --tunnel       Pre-start the cross-device HTTPS tunnel as soon as the page
+                 loads. Otherwise the tunnel starts when you click "Sign on
+                 another device" in the page. Cross-device signing needs this
+                 HTTPS tunnel because mobile wallets only inject a provider
+                 over HTTPS — a plain http://LAN-IP address will not work.
+  --stop-tunnel  Tear down the shared background cloudflared tunnel and exit.
+  --help, -h     Show this help.
 
 The request JSON is a single argument. Operation type is inferred:
   typedData → eth_signTypedData_v4 · message → personal_sign · otherwise → eth_sendTransaction
+
+Cross-device tunnels are REUSED across invocations (recorded in
+~/.agent-wallet-signer/state.json) so signing many transactions does not create
+many tunnels. The shared tunnel is one background process, reaped after 10
+minutes idle or immediately with --stop-tunnel.
 
 On success prints {"hash"|"signature", "chainId"} to stdout and exits 0.
 On rejection / no wallet / 5-min timeout prints to stderr and exits 1.
