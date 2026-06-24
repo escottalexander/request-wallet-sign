@@ -187,26 +187,26 @@ export function openBrowser(url) {
   spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
 }
 
-// ── Cloudflare tunnel (opt-in, --tunnel) ────────────────────────────────────
-// REQUIRED for signing on another device: mobile wallet browsers need a real
-// HTTPS origin, which a plain http://LAN-IP:PORT address cannot provide. This
-// spawns `npx -y cloudflared` (downloading the binary on first run) to get a
-// public https://*.trycloudflare.com URL — no Cloudflare account needed.
-// Free quick-tunnel hostnames occasionally never become reachable, so we
-// verify reachability and re-request a fresh tunnel if the first is a dud.
+// ── Cloudflare tunnel primitives ────────────────────────────────────────────
+export function extractTunnelUrl(text) {
+  const m = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+  return m ? m[0] : null;
+}
 
-function spawnTunnel(port) {
+// Spawn a DETACHED cloudflared quick tunnel that survives CLI exit (for reuse).
+// Resolves { url, pid } once the URL is printed, or null on failure/timeout.
+function startCloudflared(port) {
   return new Promise(resolve => {
     const proc = spawn('npx', ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`],
-      { stdio: ['ignore', 'pipe', 'pipe'] });
-    let buf = '';
-    let settled = false;
-    const finish = url => { if (!settled) { settled = true; resolve({ proc, url }); } };
-    const onData = chunk => {
-      buf += chunk.toString();
-      const m = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-      if (m) finish(m[0]);
+      { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let buf = '', settled = false;
+    const finish = url => {
+      if (settled) return;
+      settled = true;
+      if (url) { proc.unref(); resolve({ url, pid: proc.pid }); }
+      else { try { proc.kill(); } catch {} resolve(null); }
     };
+    const onData = c => { buf += c.toString(); const u = extractTunnelUrl(buf); if (u) finish(u); };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
     proc.on('exit', () => finish(null));
@@ -215,54 +215,11 @@ function spawnTunnel(port) {
   });
 }
 
-async function waitReachable(url, { delayMs = 10000, windowMs = 60000, intervalMs = 5000 } = {}) {
-  // Delay before the first probe: querying the hostname before Cloudflare has
-  // published its DNS record can poison the OS negative-DNS cache, making every
-  // later probe in this process fail even after the record goes live.
-  await new Promise(r => setTimeout(r, delayMs));
-  const deadline = Date.now() + windowMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (res.status === 200) return true;
-    } catch { /* edge / DNS not ready yet */ }
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-  return false;
-}
-
-export async function establishTunnel(port, log = () => {}) {
-  let lastUrl = null, lastProc = null;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const { proc, url } = await spawnTunnel(port);
-    if (!url) {
-      try { proc.kill(); } catch {}
-      log('cloudflared did not report a URL, retrying…');
-      continue;
-    }
-    lastUrl = url;
-    lastProc = proc;
-    log(`got ${url}, verifying reachability…`);
-    if (await waitReachable(url)) {
-      return { url, close: () => { try { proc.kill(); } catch {} } };
-    }
-    if (attempt < 2) {
-      try { proc.kill(); } catch {}
-      lastProc = null;
-      log(`${url} not reachable from here yet — re-requesting a fresh tunnel…`);
-    }
-  }
-  if (lastUrl && lastProc) {
-    // Couldn't confirm from this machine, but the target device uses a
-    // different DNS resolver and often resolves it fine. Hand it over rather
-    // than discard a possibly-good tunnel.
-    return {
-      url: lastUrl,
-      close: () => { try { lastProc.kill(); } catch {} },
-      unverified: true,
-    };
-  }
-  throw new Error('cloudflared never produced a tunnel URL');
+async function probeUrl(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    return r.status === 200;
+  } catch { return false; }
 }
 
 // ── HTML builder ──────────────────────────────────────────────────────────────
@@ -869,34 +826,9 @@ export async function run(argv) {
   const networkIP = getLocalNetworkIP();
   const networkUrl = networkIP ? `http://${networkIP}:${port}` : null;
 
-  // --tunnel: expose a public HTTPS URL so the page can be signed from another
-  // device (mobile wallets require a real HTTPS origin).
-  let tunnelUrl = null;
-  let tunnelThrottled = false;
-  let closeTunnel = () => {};
-  if (opts.tunnel) {
-    process.stderr.write('tunnel: starting Cloudflare tunnel via npx (first run downloads cloudflared)…\n');
-    try {
-      const t = await establishTunnel(port, m => process.stderr.write(`tunnel: ${m}\n`));
-      if (t.unverified) {
-        // Couldn't confirm the tunnel (most often Cloudflare throttling free
-        // quick-tunnels). Drop it and fall back to the LAN URL with a caveat.
-        t.close();
-        tunnelThrottled = true;
-        process.stderr.write('tunnel: throttled / could not be confirmed — falling back to same-network URL; re-run with --tunnel later\n');
-      } else {
-        tunnelUrl = t.url;
-        closeTunnel = t.close;
-      }
-    } catch (e) {
-      tunnelThrottled = true;
-      process.stderr.write(`tunnel: ${e.message} — falling back to same-network URL; re-run with --tunnel later\n`);
-    }
-  }
-
-  const html = buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled);
+  const html = buildHtml(req, port, networkUrl);
   const { result, close } = startServer(port, html);
-  const cleanup = () => { close(); closeTunnel(); };
+  const cleanup = () => { close(); };
 
   const timeout = setTimeout(() => {
     cleanup();
@@ -904,11 +836,7 @@ export async function run(argv) {
     process.exit(1);
   }, TIMEOUT_MS);
 
-  if (tunnelUrl) {
-    process.stderr.write(`sign on any device:   ${tunnelUrl}\n`);
-  } else if (networkUrl) {
-    process.stderr.write(`sign on same network: ${networkUrl}${tunnelThrottled ? '  (tunnel throttled — retry --tunnel later)' : ''}\n`);
-  }
+  if (networkUrl) process.stderr.write(`same-network URL: ${networkUrl}\n`);
   openBrowser(`http://localhost:${port}`);
 
   result
