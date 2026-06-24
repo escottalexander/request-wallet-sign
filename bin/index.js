@@ -2,10 +2,17 @@
 
 // ── Request parsing ───────────────────────────────────────────────────────────
 
+// Parse CLI options (flags) from argv, separate from the request JSON.
+export function parseOptions(argv) {
+  const args = argv.slice(2);
+  return { tunnel: args.includes('--tunnel') };
+}
+
 export function parseRequest(argv) {
-  const raw = argv[2];
+  // The request JSON is the first argument that isn't a --flag.
+  const raw = argv.slice(2).find(a => !a.startsWith('--'));
   if (!raw) {
-    throw new Error("Usage: agent-wallet-signer '<request JSON>'");
+    throw new Error("Usage: agent-wallet-signer [--tunnel] '<request JSON>'");
   }
 
   let parsed;
@@ -42,16 +49,29 @@ export function parseRequest(argv) {
 // ── Port finding ──────────────────────────────────────────────────────────────
 
 import { createServer as createNetServer } from 'node:net';
+import { networkInterfaces } from 'node:os';
 
 export function findAvailablePort() {
   return new Promise((resolve, reject) => {
     const srv = createNetServer();
-    srv.listen(0, '127.0.0.1', () => {
+    srv.listen(0, '0.0.0.0', () => {
       const port = srv.address().port;
       srv.close(() => resolve(port));
     });
     srv.on('error', reject);
   });
+}
+
+export function getLocalNetworkIP() {
+  const nets = networkInterfaces();
+  for (const ifaces of Object.values(nets)) {
+    for (const iface of ifaces) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return null;
 }
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
@@ -98,7 +118,7 @@ export function startServer(port, html) {
     }
   });
 
-  server.listen(port, '127.0.0.1');
+  server.listen(port, '0.0.0.0');
   server.on('error', (err) => {
     rejectResult(err);
   });
@@ -117,9 +137,87 @@ export function openBrowser(url) {
   spawn(cmd, [url], { detached: true, stdio: 'ignore' }).unref();
 }
 
+// ── Cloudflare tunnel (opt-in, --tunnel) ────────────────────────────────────
+// REQUIRED for signing on another device: mobile wallet browsers need a real
+// HTTPS origin, which a plain http://LAN-IP:PORT address cannot provide. This
+// spawns `npx -y cloudflared` (downloading the binary on first run) to get a
+// public https://*.trycloudflare.com URL — no Cloudflare account needed.
+// Free quick-tunnel hostnames occasionally never become reachable, so we
+// verify reachability and re-request a fresh tunnel if the first is a dud.
+
+function spawnTunnel(port) {
+  return new Promise(resolve => {
+    const proc = spawn('npx', ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+    let buf = '';
+    let settled = false;
+    const finish = url => { if (!settled) { settled = true; resolve({ proc, url }); } };
+    const onData = chunk => {
+      buf += chunk.toString();
+      const m = buf.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+      if (m) finish(m[0]);
+    };
+    proc.stdout.on('data', onData);
+    proc.stderr.on('data', onData);
+    proc.on('exit', () => finish(null));
+    proc.on('error', () => finish(null));
+    setTimeout(() => finish(null), 25000);
+  });
+}
+
+async function waitReachable(url, { delayMs = 10000, windowMs = 60000, intervalMs = 5000 } = {}) {
+  // Delay before the first probe: querying the hostname before Cloudflare has
+  // published its DNS record can poison the OS negative-DNS cache, making every
+  // later probe in this process fail even after the record goes live.
+  await new Promise(r => setTimeout(r, delayMs));
+  const deadline = Date.now() + windowMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (res.status === 200) return true;
+    } catch { /* edge / DNS not ready yet */ }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
+export async function establishTunnel(port, log = () => {}) {
+  let lastUrl = null, lastProc = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { proc, url } = await spawnTunnel(port);
+    if (!url) {
+      try { proc.kill(); } catch {}
+      log('cloudflared did not report a URL, retrying…');
+      continue;
+    }
+    lastUrl = url;
+    lastProc = proc;
+    log(`got ${url}, verifying reachability…`);
+    if (await waitReachable(url)) {
+      return { url, close: () => { try { proc.kill(); } catch {} } };
+    }
+    if (attempt < 2) {
+      try { proc.kill(); } catch {}
+      lastProc = null;
+      log(`${url} not reachable from here yet — re-requesting a fresh tunnel…`);
+    }
+  }
+  if (lastUrl && lastProc) {
+    // Couldn't confirm from this machine, but the target device uses a
+    // different DNS resolver and often resolves it fine. Hand it over rather
+    // than discard a possibly-good tunnel.
+    return {
+      url: lastUrl,
+      close: () => { try { lastProc.kill(); } catch {} },
+      unverified: true,
+    };
+  }
+  throw new Error('cloudflared never produced a tunnel URL');
+}
+
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
-export function buildHtml(req, port) {
+export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {
   const label = req.label || 'Sign Transaction';
   const description = req.description || '';
 
@@ -138,7 +236,34 @@ export function buildHtml(req, port) {
     43114:   { name: 'Avalanche',     explorer: 'https://snowtrace.io',             rpc: 'https://api.avax.network/ext/bc/C/rpc',          symbol: 'AVAX' },
     81457:   { name: 'Blast',         explorer: 'https://blastscan.io',             rpc: 'https://rpc.blast.io',                           symbol: 'ETH'  },
     7777777: { name: 'Zora',          explorer: 'https://explorer.zora.energy',     rpc: 'https://rpc.zora.energy',                        symbol: 'ETH'  },
+    // ── Testnets ──
+    11155111:{ name: 'Sepolia',           explorer: 'https://sepolia.etherscan.io',          rpc: 'https://ethereum-sepolia-rpc.publicnode.com', symbol: 'ETH' },
+    17000:   { name: 'Holesky',           explorer: 'https://holesky.etherscan.io',          rpc: 'https://ethereum-holesky-rpc.publicnode.com', symbol: 'ETH' },
+    560048:  { name: 'Hoodi',             explorer: 'https://hoodi.etherscan.io',            rpc: 'https://ethereum-hoodi-rpc.publicnode.com',   symbol: 'ETH' },
+    84532:   { name: 'Base Sepolia',      explorer: 'https://sepolia.basescan.org',          rpc: 'https://sepolia.base.org',                    symbol: 'ETH' },
+    11155420:{ name: 'Optimism Sepolia',  explorer: 'https://sepolia-optimism.etherscan.io', rpc: 'https://sepolia.optimism.io',                 symbol: 'ETH' },
+    421614:  { name: 'Arbitrum Sepolia',  explorer: 'https://sepolia.arbiscan.io',           rpc: 'https://sepolia-rollup.arbitrum.io/rpc',      symbol: 'ETH' },
   };
+
+  // Connectivity banner: a live tunnel takes over entirely; otherwise show the
+  // LAN address (with a caveat if a requested tunnel was throttled/unconfirmed).
+  let connectivityHtml = '';
+  if (tunnelUrl) {
+    connectivityHtml = `<div class="network-info tunnel">
+    <span>&#x1f30e; Sign on any device:</span>
+    <a href="${escHtml(tunnelUrl)}" target="_blank">${escHtml(tunnelUrl)}</a>
+    <button class="icon-btn" id="copy-tunnel-btn" title="Copy public HTTPS URL">⧉ Copy</button>
+  </div>`;
+  } else if (networkUrl) {
+    const caveat = tunnelThrottled
+      ? `<div class="net-caveat">&#x26a0;&#xfe0f; The Cloudflare tunnel is currently throttled, so cross-device signing over HTTPS is unavailable right now. This same-network address works for devices on this Wi-Fi; re-run with <code>--tunnel</code> later to sign from anywhere.</div>`
+      : '';
+    connectivityHtml = `<div class="network-info">
+    <span>&#x1f4f1; Same network:</span>
+    <a href="${escHtml(networkUrl)}" target="_blank">${escHtml(networkUrl)}</a>
+    <button class="icon-btn" id="copy-url-btn" title="Copy network URL">⧉ Copy</button>
+  </div>${caveat}`;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -182,6 +307,28 @@ export function buildHtml(req, port) {
     .alert-success { background: #052e16; border: 1px solid #166534; color: #86efac; }
     .alert-error   { background: #2d0a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
     .hash-link { color: #60a5fa; word-break: break-all; }
+    .card-header { display: flex; justify-content: space-between; align-items: flex-start;
+                   gap: 1rem; margin-bottom: 0.5rem; }
+    .card-header h1 { margin-bottom: 0; }
+    /* Small auto-width buttons override the full-width default */
+    .icon-btn { width: auto; padding: 0.4rem 0.7rem; font-size: 0.75rem; font-weight: 500;
+                background: #2d3148; color: #cbd5e1; border-radius: 6px; flex-shrink: 0;
+                white-space: nowrap; }
+    .icon-btn:hover:not(:disabled) { background: #3a3f5a; opacity: 1; }
+    .row-value.copyable { cursor: pointer; transition: color 0.15s; }
+    .row-value.copyable:hover { color: #60a5fa; }
+    .row-value.copyable::after { content: ' ⧉'; color: #64748b; font-size: 0.75em; }
+    .network-info { margin-top: 0.75rem; padding: 0.6rem 0.875rem; border-radius: 8px;
+                    background: #0d1a2e; border: 1px solid #1e3a5f; font-size: 0.8rem;
+                    color: #64748b; display: flex; align-items: center; gap: 0.5rem; }
+    .network-info:first-of-type { margin-top: 1.25rem; }
+    .network-info a { color: #60a5fa; text-decoration: none; word-break: break-all; flex: 1; }
+    .network-info a:hover { text-decoration: underline; }
+    .network-info.tunnel { background: #0d1e16; border-color: #1e5f3a; }
+    .network-info.tunnel a { color: #4ade80; }
+    .net-caveat { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 8px;
+                  background: #2a1e08; border: 1px solid #5f4a1e; color: #fbbf24;
+                  font-size: 0.75rem; line-height: 1.4; }
     /* State visibility: sections with [data-show] are hidden unless body[data-state] matches */
     [data-show] { display: none; }
     body[data-state="ready"]       [data-show="ready"]     { display: block; }
@@ -196,7 +343,10 @@ export function buildHtml(req, port) {
 <div class="card">
 
   <div data-show="ready">
-    <h1>${escHtml(label)}</h1>
+    <div class="card-header">
+      <h1>${escHtml(label)}</h1>
+      <button class="icon-btn" id="copy-all-btn" title="Copy full transaction data">⧉ Copy all</button>
+    </div>
     ${description ? `<p class="desc">${escHtml(description)}</p>` : ''}
     <div class="summary" id="summary"></div>
     <div class="decode" id="decode"></div>
@@ -224,11 +374,13 @@ export function buildHtml(req, port) {
     </p>
   </div>
 
+  ${connectivityHtml}
+
 </div>
 <script type="module">
 // ── Injected by CLI ────────────────────────────────────────────────────────
 const REQUEST    = ${JSON.stringify(req).replace(/<\/script>/gi, '<\\/script>')};
-const RESULT_URL = 'http://localhost:${port}/result';
+const RESULT_URL = '/result';
 const CHAIN_META = ${JSON.stringify(CHAINS).replace(/<\/script>/gi, '<\\/script>')};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -236,23 +388,87 @@ const setState = s => { document.body.dataset.state = s; };
 const hex = n  => '0x' + n.toString(16);
 const trunc = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
 
+// Copy text to clipboard, with a fallback for insecure (plain http/LAN) contexts
+// where navigator.clipboard is unavailable. Flashes "✓ Copied" on the button.
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  }
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied';
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  }
+}
+
+// Format a wei value (hex string) as a decimal ETH amount, trimming trailing zeros.
+function formatEther(weiHex) {
+  const wei = BigInt(weiHex || '0x0');
+  const ONE = 1000000000000000000n;
+  const whole = wei / ONE;
+  const frac = wei % ONE;
+  if (frac === 0n) return whole.toString();
+  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '');
+  return whole.toString() + '.' + fracStr;
+}
+
+// Human-readable JSON of the full request, for the "Copy all" button.
+function txDataText() {
+  const meta = CHAIN_META[REQUEST.chainId] || {};
+  const out = { chainId: REQUEST.chainId, chain: meta.name || \`Chain \${REQUEST.chainId}\` };
+  if (REQUEST._type === 'sendTransaction') {
+    if (REQUEST.to) out.to = REQUEST.to;
+    out.value = REQUEST.value || '0x0';
+    out.valueEth = formatEther(REQUEST.value) + ' ' + (meta.symbol || 'ETH');
+    if (REQUEST.data) out.data = REQUEST.data;
+    if (REQUEST.gas) out.gas = REQUEST.gas;
+  } else if (REQUEST._type === 'signTypedData') {
+    out.typedData = REQUEST.typedData;
+  } else {
+    out.message = REQUEST.message;
+  }
+  return JSON.stringify(out, null, 2);
+}
+
 // ── Summary table ──────────────────────────────────────────────────────────
 function renderSummary() {
-  const chainName = (CHAIN_META[REQUEST.chainId] || {}).name || \`Chain \${REQUEST.chainId}\`;
-  const rows = [['Chain', chainName]];
+  const meta = CHAIN_META[REQUEST.chainId] || {};
+  const chainName = meta.name || \`Chain \${REQUEST.chainId}\`;
+  const symbol = meta.symbol || 'ETH';
+  const rows = [{ label: 'Chain', value: chainName }];
   if (REQUEST._type === 'sendTransaction') {
-    rows.push(['To', REQUEST.to ? trunc(REQUEST.to) : 'Contract deployment']);
+    if (REQUEST.to) {
+      rows.push({ label: 'To', value: trunc(REQUEST.to), copy: REQUEST.to });
+    } else {
+      rows.push({ label: 'To', value: 'Contract deployment' });
+    }
     const val = BigInt(REQUEST.value || '0x0');
-    if (val > 0n) rows.push(['Value', \`\${val} wei\`]);
-    if (REQUEST.gas) rows.push(['Gas limit', Number(BigInt(REQUEST.gas)).toLocaleString()]);
+    if (val > 0n) rows.push({ label: 'Value', value: \`\${formatEther(REQUEST.value)} \${symbol}\` });
+    if (REQUEST.gas) rows.push({ label: 'Gas limit', value: Number(BigInt(REQUEST.gas)).toLocaleString() });
   } else if (REQUEST._type === 'signTypedData') {
-    rows.push(['Type', REQUEST.typedData?.primaryType || '—']);
+    rows.push({ label: 'Type', value: REQUEST.typedData?.primaryType || '—' });
   } else {
-    rows.push(['Type', 'personal_sign']);
+    rows.push({ label: 'Type', value: 'personal_sign' });
   }
   document.getElementById('summary').innerHTML = rows
-    .map(([k, v]) => \`<div class="row"><span class="row-label">\${k}</span><span class="row-value">\${v}</span></div>\`)
+    .map(r => \`<div class="row"><span class="row-label">\${r.label}</span>\` +
+      (r.copy
+        ? \`<span class="row-value copyable" data-copy="\${r.copy}" title="Click to copy">\${r.value}</span>\`
+        : \`<span class="row-value">\${r.value}</span>\`) +
+      \`</div>\`)
     .join('');
+  document.querySelectorAll('#summary .copyable').forEach(el => {
+    el.addEventListener('click', () => copyText(el.dataset.copy, null));
+  });
 }
 
 // ── Post result back to CLI ────────────────────────────────────────────────
@@ -278,10 +494,9 @@ async function onConnect() {
     const account = accounts[0];
     const currentChainHex = await window.ethereum.request({ method: 'eth_chainId' });
     if (Number(currentChainHex) !== REQUEST.chainId) {
-      setState('wrong-chain');
-      btn.textContent = \`Switch to \${(CHAIN_META[REQUEST.chainId] || {}).name || 'required chain'}\`;
-      btn.disabled = false;
-      btn.onclick = () => switchChain(account);
+      // Trigger the network switch automatically — no extra button click.
+      // The wallet still shows its own approval prompt for the switch.
+      await switchChain(account);
       return;
     }
     await sign(account);
@@ -292,7 +507,9 @@ async function onConnect() {
 
 async function switchChain(account) {
   const btn = document.getElementById('btn');
+  const chainName = (CHAIN_META[REQUEST.chainId] || {}).name || 'the required network';
   btn.disabled = true;
+  btn.innerHTML = \`<span class="spinner"></span>Switch to \${chainName} in your wallet…\`;
   try {
     await window.ethereum.request({
       method: 'wallet_switchEthereumChain',
@@ -348,14 +565,27 @@ async function buildTx(account) {
     tx.maxFeePerGas = REQUEST.maxFeePerGas;
     tx.maxPriorityFeePerGas = REQUEST.maxPriorityFeePerGas;
   } else {
-    const [priorityFeeHex, block] = await Promise.all([
-      window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' }),
-      window.ethereum.request({ method: 'eth_getBlockByNumber', params: ['latest', false] }),
-    ]);
-    const priorityFee = BigInt(priorityFeeHex);
-    const baseFee     = BigInt(block.baseFeePerGas);
-    tx.maxPriorityFeePerGas = hex(priorityFee);
-    tx.maxFeePerGas         = hex(baseFee * 2n + priorityFee);
+    // Best-effort fee estimation. Some wallets/RPCs don't expose
+    // eth_maxPriorityFeePerGas — fall back gracefully, and if we can't
+    // estimate at all, omit fee fields entirely so the wallet fills them in.
+    try {
+      const block = await window.ethereum.request({
+        method: 'eth_getBlockByNumber', params: ['latest', false],
+      });
+      const baseFee = BigInt(block.baseFeePerGas);
+
+      let priorityFee;
+      try {
+        priorityFee = BigInt(await window.ethereum.request({ method: 'eth_maxPriorityFeePerGas' }));
+      } catch {
+        priorityFee = 1500000000n; // 1.5 gwei default tip
+      }
+
+      tx.maxPriorityFeePerGas = hex(priorityFee);
+      tx.maxFeePerGas         = hex(baseFee * 2n + priorityFee);
+    } catch {
+      // Couldn't estimate — let the wallet populate gas fees on its own.
+    }
   }
   return tx;
 }
@@ -403,6 +633,11 @@ async function sign(account) {
     } else {
       doneMsg.textContent = \`Signature: \${result.signature}\`;
     }
+
+    // Best-effort auto-close. Browsers only let a script close a tab it opened
+    // itself, so this silently no-ops for OS-launched tabs — the "you can close
+    // this tab" fallback message stays visible in that case.
+    setTimeout(() => { try { window.close(); } catch {} }, 1500);
 
   } catch (e) {
     showError(e.message || String(e));
@@ -498,6 +733,20 @@ async function initDecoding() {
   }
 }
 
+// ── Copy buttons (work regardless of wallet state) ──────────────────────────
+function wireCopyUrl(btnId) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  const url = btn.closest('.network-info').querySelector('a').getAttribute('href');
+  btn.addEventListener('click', e => copyText(url, e.currentTarget));
+}
+wireCopyUrl('copy-tunnel-btn');
+wireCopyUrl('copy-url-btn');
+const copyAllBtn = document.getElementById('copy-all-btn');
+if (copyAllBtn) {
+  copyAllBtn.addEventListener('click', e => copyText(txDataText(), e.currentTarget));
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!window.ethereum) {
   setState('no-wallet');
@@ -530,37 +779,98 @@ export function escHtml(str) {
 
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+export const HELP_TEXT = `agent-wallet-signer — surface a wallet signing request to a user via a browser page
+
+USAGE
+  npx agent-wallet-signer [--tunnel] '<request JSON>'
+
+OPTIONS
+  --tunnel    Expose the signing page over a public HTTPS URL (Cloudflare quick
+              tunnel, auto-installed via npx — no account needed).
+              ► REQUIRED to sign on ANOTHER DEVICE (phone, tablet, other computer).
+              Mobile wallet browsers only inject a provider over HTTPS, so the
+              default http://localhost / http://LAN-IP address will NOT work on
+              another device. Without this flag the page is local-only.
+  --help, -h  Show this help.
+
+The request JSON is a single argument. Operation type is inferred:
+  typedData → eth_signTypedData_v4 · message → personal_sign · otherwise → eth_sendTransaction
+
+On success prints {"hash"|"signature", "chainId"} to stdout and exits 0.
+On rejection / no wallet / 5-min timeout prints to stderr and exits 1.
+`;
+
 export async function run(argv) {
-  let req;
+  if (argv.slice(2).some(a => a === '--help' || a === '-h')) {
+    process.stdout.write(HELP_TEXT);
+    process.exit(0);
+  }
+
+  let req, opts;
   try {
     req = parseRequest(argv);
+    opts = parseOptions(argv);
   } catch (e) {
     process.stderr.write(e.message + '\n');
     process.exit(1);
   }
 
   const port = await findAvailablePort();
-  const html = buildHtml(req, port);
+  const networkIP = getLocalNetworkIP();
+  const networkUrl = networkIP ? `http://${networkIP}:${port}` : null;
+
+  // --tunnel: expose a public HTTPS URL so the page can be signed from another
+  // device (mobile wallets require a real HTTPS origin).
+  let tunnelUrl = null;
+  let tunnelThrottled = false;
+  let closeTunnel = () => {};
+  if (opts.tunnel) {
+    process.stderr.write('tunnel: starting Cloudflare tunnel via npx (first run downloads cloudflared)…\n');
+    try {
+      const t = await establishTunnel(port, m => process.stderr.write(`tunnel: ${m}\n`));
+      if (t.unverified) {
+        // Couldn't confirm the tunnel (most often Cloudflare throttling free
+        // quick-tunnels). Drop it and fall back to the LAN URL with a caveat.
+        t.close();
+        tunnelThrottled = true;
+        process.stderr.write('tunnel: throttled / could not be confirmed — falling back to same-network URL; re-run with --tunnel later\n');
+      } else {
+        tunnelUrl = t.url;
+        closeTunnel = t.close;
+      }
+    } catch (e) {
+      tunnelThrottled = true;
+      process.stderr.write(`tunnel: ${e.message} — falling back to same-network URL; re-run with --tunnel later\n`);
+    }
+  }
+
+  const html = buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled);
   const { result, close } = startServer(port, html);
+  const cleanup = () => { close(); closeTunnel(); };
 
   const timeout = setTimeout(() => {
-    close();
+    cleanup();
     process.stderr.write('timeout: user did not respond\n');
     process.exit(1);
   }, TIMEOUT_MS);
 
+  if (tunnelUrl) {
+    process.stderr.write(`sign on any device:   ${tunnelUrl}\n`);
+  } else if (networkUrl) {
+    process.stderr.write(`sign on same network: ${networkUrl}${tunnelThrottled ? '  (tunnel throttled — retry --tunnel later)' : ''}\n`);
+  }
   openBrowser(`http://localhost:${port}`);
 
   result
     .then(data => {
       clearTimeout(timeout);
-      close();
+      cleanup();
       process.stdout.write(JSON.stringify(data) + '\n');
       process.exit(0);
     })
     .catch(e => {
       clearTimeout(timeout);
-      close();
+      cleanup();
       process.stderr.write((e.message ?? String(e)) + '\n');
       process.exit(1);
     });

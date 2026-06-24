@@ -17,9 +17,9 @@ test('HTML contains REQUEST global with chainId', () => {
   assert.ok(html.includes('"chainId":1'));
 });
 
-test('HTML contains RESULT_URL pointing to correct port', () => {
+test('HTML contains relative RESULT_URL', () => {
   const html = buildHtml(makeReq(), 4242);
-  assert.ok(html.includes('http://localhost:4242/result'));
+  assert.ok(html.includes("'/result'"));
 });
 
 test('HTML contains label in page title', () => {
@@ -122,4 +122,63 @@ test('HTML contains decodeCalldata function', () => {
 test('HTML contains decodeSlot function for ABI decoding', () => {
   const html = buildHtml(makeReq(), 3000);
   assert.ok(html.includes('decodeSlot'));
+});
+
+test('HTML formats value as ETH not wei', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes('formatEther'));
+  assert.ok(!html.includes('wei`'));
+});
+
+test('HTML includes Sepolia in chain metadata', () => {
+  const html = buildHtml(makeReq({ chainId: 11155111 }), 3000);
+  assert.ok(html.includes('Sepolia'));
+});
+
+test('HTML has copy-all and clipboard support', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes('copy-all-btn'));
+  assert.ok(html.includes('function copyText'));
+  assert.ok(html.includes('txDataText'));
+});
+
+test('HTML marks "to" value as copyable', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes('copyable'));
+});
+
+test('HTML includes network URL copy button when networkUrl provided', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000');
+  assert.ok(html.includes('copy-url-btn'));
+  assert.ok(html.includes('http://192.168.1.5:3000'));
+});
+
+test('HTML shows the tunnel URL when provided', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', 'https://foo-bar.trycloudflare.com');
+  assert.ok(html.includes('https://foo-bar.trycloudflare.com'));
+  assert.ok(html.includes('id="copy-tunnel-btn"'));
+});
+
+test('HTML omits tunnel section when no tunnel URL', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000');
+  assert.ok(!html.includes('id="copy-tunnel-btn"'));
+});
+
+test('HTML hides the LAN section when a tunnel URL is shown', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', 'https://foo-bar.trycloudflare.com');
+  assert.ok(html.includes('id="copy-tunnel-btn"'));   // tunnel shown
+  assert.ok(!html.includes('id="copy-url-btn"'));      // LAN section hidden
+});
+
+test('HTML shows LAN URL with a throttle caveat when tunnel throttled', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', null, true);
+  assert.ok(html.includes('id="copy-url-btn"'));       // LAN shown
+  assert.ok(/throttl/i.test(html));                    // caveat present
+  assert.ok(!html.includes('id="copy-tunnel-btn"'));   // no tunnel link
+});
+
+test('HTML fee estimation falls back when eth_maxPriorityFeePerGas unavailable', () => {
+  const html = buildHtml(makeReq(), 3000);
+  // The priority-fee call must be wrapped so an unsupported method degrades gracefully
+  assert.ok(html.includes('1500000000n'));
 });

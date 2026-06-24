@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRequest } from '../bin/index.js';
+import { parseRequest, parseOptions } from '../bin/index.js';
 
 test('throws when no argument provided', () => {
   assert.throws(() => parseRequest(['node', 'script']), /Usage:/);
@@ -73,4 +73,24 @@ test('defaults value to 0x0 for sendTransaction', () => {
 test('preserves explicit value when provided', () => {
   const req = parseRequest(['node', 's', JSON.stringify({ chainId: 1, to: '0xabc', value: '0xde0b6b3a7640000' })]);
   assert.equal(req.value, '0xde0b6b3a7640000');
+});
+
+test('parseRequest finds JSON arg when --tunnel flag precedes it', () => {
+  const req = parseRequest(['node', 's', '--tunnel', JSON.stringify({ chainId: 1, to: '0xabc' })]);
+  assert.equal(req.chainId, 1);
+  assert.equal(req._type, 'sendTransaction');
+});
+
+test('parseRequest finds JSON arg when --tunnel flag follows it', () => {
+  const req = parseRequest(['node', 's', JSON.stringify({ chainId: 1, to: '0xabc' }), '--tunnel']);
+  assert.equal(req.chainId, 1);
+});
+
+test('parseOptions detects --tunnel flag', () => {
+  assert.equal(parseOptions(['node', 's', '--tunnel', '{}']).tunnel, true);
+  assert.equal(parseOptions(['node', 's', '{}', '--tunnel']).tunnel, true);
+});
+
+test('parseOptions defaults tunnel to false', () => {
+  assert.equal(parseOptions(['node', 's', '{}']).tunnel, false);
 });

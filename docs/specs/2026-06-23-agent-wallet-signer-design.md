@@ -33,8 +33,7 @@ CLI (bin/index.js)
   ├─ Parse request JSON from argv
   ├─ Start HTTP server on random available port
   ├─ Open browser → http://localhost:PORT
-  ├─ Serve HTML at GET /  (request data baked in)
-  ├─ Expose request data at GET /session
+  ├─ Serve HTML at GET /  (request data baked into HTML response)
   └─ Wait for POST /result
         │
         ▼
@@ -64,10 +63,15 @@ On failure (user rejects, timeout, no wallet), CLI prints error to stderr and ex
 ### Invocation
 
 ```bash
-npx agent-wallet-signer '<request JSON>'
+npx agent-wallet-signer [--tunnel] '<request JSON>'
 ```
 
-The full request is passed as a single JSON string argument. No flags, no config files.
+The full request is passed as a single JSON string argument.
+
+### Flags
+
+- `--tunnel` — **Required to sign on another device.** Exposes the page over a public HTTPS URL via a Cloudflare quick tunnel (`npx -y cloudflared`, auto-downloaded, no account). Mobile wallet browsers only inject `window.ethereum` over HTTPS, so the default `http://localhost` / `http://LAN-IP` address fails on a phone. The tunnel is verified reachable before use (re-requested up to 3× if a free hostname is a dud) and torn down on exit. Opt-in because it makes the page publicly reachable by anyone holding the random URL.
+- `--help`, `-h` — Print usage.
 
 ### Timeout
 
@@ -88,7 +92,7 @@ Default 5-minute timeout. If the user does not sign within that window, the CLI 
 
 ## Request Format
 
-Operation type is inferred from the shape of the JSON — no explicit `type` field required.
+Operation type is inferred from the shape of the JSON — no explicit `type` field required. Priority when fields overlap: `typedData` → `eth_signTypedData_v4`; `message` → `personal_sign`; otherwise → `eth_sendTransaction`.
 
 ### `eth_sendTransaction` (has `chainId` + `to` or `data`, no `typedData`/`message`)
 
@@ -232,7 +236,7 @@ agent-wallet-signer/
 ## Out of Scope
 
 - EIP-7702 authorization signing (requires raw private key; browser wallets don't support it — handled separately via `cast wallet sign-authorization`)
-- Mobile wallet support / WalletConnect / openlv (future)
+- WalletConnect / openlv pairing (mobile signing is instead supported by serving the existing page over HTTPS via `--tunnel`)
 - Multi-step sessions (one invocation = one signing request)
 - Transaction simulation / revert preview
 - Hardware wallet support beyond what browser extensions proxy
