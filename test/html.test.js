@@ -110,14 +110,17 @@ test('HTML handles contract deployment with no to address', () => {
   assert.ok(html.includes('deployment') || html.includes('bytes'));
 });
 
-test('HTML contains decodeCalldata function', () => {
+test('HTML injects pure decode helpers and the what-this-does container', () => {
   const html = buildHtml(makeReq(), 3000);
-  assert.ok(html.includes('decodeCalldata'));
+  assert.ok(html.includes('function awsDescribeCall'));
+  assert.ok(html.includes('id="what"'));
 });
 
-test('HTML contains decodeSlot function for ABI decoding', () => {
+test('HTML decode pipeline uses ERC-7730, openchain signature lookup, and viem', () => {
   const html = buildHtml(makeReq(), 3000);
-  assert.ok(html.includes('decodeSlot'));
+  assert.ok(html.includes('renderWhatThisDoes'));
+  assert.ok(html.includes('OpenChainSignatureLookup'));
+  assert.ok(html.includes('tryCalldataDescriptor'));
 });
 
 test('HTML formats value as ETH not wei', () => {

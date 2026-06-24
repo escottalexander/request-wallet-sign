@@ -486,8 +486,8 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
       <h1 id="headline">Review transaction</h1>
       <button class="icon-btn" id="copy-all-btn" title="Copy full transaction data">⧉ Copy all</button>
     </div>
+    <div id="what" class="decode" style="display:none"></div>
     <div class="summary" id="summary"></div>
-    <div class="decode" id="decode"></div>
     <button id="btn">Connect Wallet</button>
   </div>
 
@@ -537,6 +537,9 @@ const REQUEST    = ${JSON.stringify(req).replace(/<\/script>/gi, '<\\/script>')}
 const RESULT_URL = '/result';
 const AUTO_TUNNEL = ${autoTunnel};
 const CHAIN_META = ${JSON.stringify(CHAINS).replace(/<\/script>/gi, '<\\/script>')};
+
+// ── Pure decode helpers (shared with node tests) ────────────────────────────
+${DECODE_HELPERS_JS}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const setState = s => { document.body.dataset.state = s; };
@@ -804,88 +807,156 @@ async function sign(account) {
 // Manual ABI decoder for fixed-size slot types.
 // Covers the most common parameter types (address, uint*, bool, bytes32).
 // Dynamic types (string, bytes[], tuples) fall back to "(complex type)".
-function decodeSlot(type, slot) {
-  if (type === 'address')                  return '0x' + slot.slice(-40);
-  if (/^u?int(\d+)?$/.test(type)) {
-    try { return BigInt('0x' + slot).toString(); } catch { return '0x' + slot; }
+// ── "What this does": decode the transaction from its own data ──────────────
+// Layered & best-effort: ERC-7730 descriptor → resolved-signature semantic
+// render (4byte/openchain + viem) → generic decoded call → raw. Any failure
+// falls through; signing is never blocked. The wallet's own review is the
+// final backstop.
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function showWhat(title, fields) {
+  if (title) document.getElementById('headline').textContent = title;
+  const el = document.getElementById('what');
+  el.style.display = 'block';
+  el.innerHTML = fields.map(f =>
+    \`<div class="decode-row"><span class="decode-key">\${esc(f.label)}</span>\` +
+    \`<span class="decode-val" style="\${f.danger ? 'color:#fca5a5' : ''}">\${esc(f.value)}</span></div>\`
+  ).join('');
+}
+
+async function resolveSignature(selector) {
+  try {
+    const { loaders } = await import('https://esm.sh/@shazow/whatsabi');
+    const lookup = new loaders.OpenChainSignatureLookup();
+    const sigs = await lookup.loadFunctions(selector);
+    return (sigs || []).map(s => typeof s === 'string' ? s : (s.name || String(s)));
+  } catch { return []; }
+}
+
+async function decodeArgs(signature, data) {
+  const { parseAbiItem, decodeFunctionData } = await import('https://esm.sh/viem');
+  const abi = [ parseAbiItem('function ' + signature) ];
+  const { args } = decodeFunctionData({ abi, data });
+  return (args || []).map(a => typeof a === 'bigint' ? a.toString() : a);
+}
+
+async function tokenMeta(addr) {
+  try {
+    const { decodeAbiParameters } = await import('https://esm.sh/viem');
+    const symHex = await window.ethereum.request({ method: 'eth_call', params: [{ to: addr, data: '0x95d89b41' }, 'latest'] });
+    const decHex = await window.ethereum.request({ method: 'eth_call', params: [{ to: addr, data: '0x313ce567' }, 'latest'] });
+    let symbol = null, decimals = 18;
+    try { symbol = decodeAbiParameters([{ type: 'string' }], symHex)[0]; } catch {}
+    try { decimals = Number(decodeAbiParameters([{ type: 'uint8' }], decHex)[0]); } catch {}
+    return { symbol, decimals };
+  } catch { return { symbol: null, decimals: 18 }; }
+}
+
+function resolvePath(args, path) {
+  if (path == null) return '';
+  let key = String(path);
+  if (key[0] === '#') key = key.slice(1);
+  if (key[0] === '.') key = key.slice(1);
+  if (args && typeof args === 'object' && !Array.isArray(args) && key in args) return args[key];
+  const n = Number(key);
+  if (Number.isInteger(n) && Array.isArray(args)) return args[n];
+  return Array.isArray(args) ? args.join(', ') : String(args);
+}
+
+function findDescriptorPath(idx, chainId, to) {
+  try {
+    if (Array.isArray(idx)) {
+      const hit = idx.find(e => String(e.chainId) === String(chainId) && (e.address || '').toLowerCase() === to);
+      return (hit && (hit.path || hit.file)) || null;
+    }
+    const byChain = idx[String(chainId)] || idx[chainId];
+    if (byChain) return byChain[to] || null;
+  } catch {}
+  return null;
+}
+
+async function tryCalldataDescriptor(chainId, addr, data) {
+  try {
+    const idx = await (await fetch(awsDescriptorIndexUrl('calldata'))).json();
+    const path = findDescriptorPath(idx, chainId, String(addr).toLowerCase());
+    if (!path) return null;
+    const base = 'https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master/registry/';
+    const descriptor = await (await fetch(base + path)).json();
+    const { decodeFunctionData } = await import('https://esm.sh/viem');
+    const abi = descriptor.context && descriptor.context.contract && descriptor.context.contract.abi;
+    if (!abi || !data) return null;
+    const { functionName, args } = decodeFunctionData({ abi, data });
+    const formats = (descriptor.display && descriptor.display.formats) || {};
+    const fmt = formats[functionName] || formats[data.slice(0, 10)];
+    if (!fmt) return null;
+    const fields = (fmt.fields || []).map(f => ({
+      label: f.label || f.path,
+      value: awsFormatDescriptorField(f.format, resolvePath(args, f.path), f.params || {}),
+    }));
+    return { title: fmt.intent || functionName, fields };
+  } catch { return null; }
+}
+
+async function renderWhatThisDoes() {
+  document.getElementById('headline').textContent = awsPlaceholderTitle(REQUEST._type);
+
+  if (REQUEST._type === 'personalSign') {
+    showWhat('Sign message', [{ label: 'Message', value: REQUEST.message }]);
+    return;
   }
-  if (type === 'bool')                     return slot.endsWith('1') ? 'true' : 'false';
-  if (/^bytes(\d+)?$/.test(type))         return '0x' + slot;
-  return '(complex type)';
-}
-
-function decodeCalldata(hexData, sig) {
-  const match = sig.match(/^\w+\((.*)\)$/);
-  if (!match) return null;
-  const types = match[1].split(',').map(t => t.trim()).filter(Boolean);
-  if (types.length === 0) return { params: [] };
-  const payload = hexData.slice(10); // strip 0x + 4-byte selector
-  return {
-    params: types.map((type, i) => {
-      const slot = payload.slice(i * 64, i * 64 + 64);
-      return { type, value: slot && slot.length === 64 ? decodeSlot(type, slot) : '?' };
-    }),
-  };
-}
-
-async function initDecoding() {
-  const decodeEl = document.getElementById('decode');
-  if (!decodeEl) return;
-
-  const { data, to } = REQUEST;
-
-  // Contract deployment — no 'to', just show bytecode size
-  if (!to && data && data.length > 2) {
-    const bytes = Math.floor((data.length - 2) / 2);
-    decodeEl.style.display = 'block';
-    decodeEl.innerHTML = \`<div class="decode-title">Contract deployment</div>
-      <div class="decode-row">
-        <span class="decode-key">Bytecode</span>
-        <span class="decode-val">\${bytes} bytes</span>
-      </div>\`;
+  if (REQUEST._type === 'signTypedData') {
+    const td = REQUEST.typedData || {};
+    const rows = Object.entries(td.message || {}).map(([k, v]) =>
+      ({ label: k, value: typeof v === 'object' ? JSON.stringify(v) : String(v) }));
+    showWhat('Sign ' + (td.primaryType || 'typed data'),
+      rows.length ? rows : [{ label: 'Type', value: td.primaryType || '(unknown)' }]);
     return;
   }
 
-  // Need at least a 4-byte selector (0x + 8 hex chars = 10 chars total)
-  if (!data || data.length < 10) return;
+  const { to, data, value } = REQUEST;
 
-  const selector = data.slice(2, 10); // 8 hex chars, no 0x prefix
-
-  try {
-    const { loaders } = await import('https://esm.sh/@shazow/whatsabi');
-    const sigLoader = new loaders.SigHashLoader();
-    const fns = await sigLoader.loadFunctions(selector);
-
-    if (!fns || fns.length === 0) {
-      decodeEl.style.display = 'block';
-      decodeEl.innerHTML = \`<div class="decode-title">Unknown function</div>
-        <div class="decode-row">
-          <span class="decode-key">Selector</span>
-          <span class="decode-val">0x\${selector}</span>
-        </div>\`;
-      return;
-    }
-
-    // fns[0] may be a string like "transfer(address,uint256)" or an object with a name property
-    const sig = typeof fns[0] === 'string' ? fns[0] : (fns[0].name || JSON.stringify(fns[0]));
-    const safeSig = sig.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const decoded = decodeCalldata(data, sig);
-
-    decodeEl.style.display = 'block';
-    let inner = \`<div class="decode-title">Calling: \${safeSig}</div>\`;
-    if (decoded?.params.length) {
-      inner += decoded.params
-        .map(p => \`<div class="decode-row">
-          <span class="decode-key">\${p.type}</span>
-          <span class="decode-val">\${p.value}</span>
-        </div>\`)
-        .join('');
-    }
-    decodeEl.innerHTML = inner;
-
-  } catch {
-    // whatsabi CDN unavailable or lookup failed — skip decoding silently
+  // Contract deployment
+  if (!to && data && data.length > 2) {
+    const bytes = Math.floor((data.length - 2) / 2);
+    showWhat('Deploy a new contract', [{ label: 'Bytecode', value: bytes + ' bytes' }]);
+    return;
   }
+
+  // Native send (no calldata)
+  if (!data || data.length < 10) {
+    const sym = (CHAIN_META[REQUEST.chainId] || {}).symbol || 'ETH';
+    const amt = awsFormatAmount(BigInt(value || '0x0').toString(), 18) + ' ' + sym;
+    if (to) showWhat('Send ' + amt + ' to ' + awsTrunc(to), [{ label: 'To', value: to }, { label: 'Amount', value: amt }]);
+    return;
+  }
+
+  // 1) ERC-7730 descriptor (protocol-authored)
+  const desc7730 = await tryCalldataDescriptor(REQUEST.chainId, to, data);
+  if (desc7730) { showWhat(desc7730.title, desc7730.fields); return; }
+
+  // 2) Resolved-signature semantic render
+  const sigs = await resolveSignature(data.slice(0, 10));
+  if (!sigs.length) {
+    showWhat(null, [{ label: 'Call', value: 'Unknown function ' + data.slice(0, 10) + ' — confirm in your wallet' }]);
+    return;
+  }
+  const signature = sigs[0];
+  let args;
+  try { args = await decodeArgs(signature, data); }
+  catch {
+    showWhat('Calls ' + awsParseSignature(signature).name + '()',
+      [{ label: 'Signature', value: signature }, { label: 'Note', value: 'Could not decode arguments — confirm in your wallet' }]);
+    return;
+  }
+
+  const { name, types } = awsParseSignature(signature);
+  let meta = {};
+  if ((name === 'transfer' || name === 'transferFrom' || name === 'approve') && to) meta = await tokenMeta(to);
+  const desc = awsDescribeCall({ signature, args, symbol: meta.symbol, decimals: meta.decimals });
+  if (desc) { showWhat(desc.title, desc.fields); return; }
+
+  // 3) Generic decoded call
+  showWhat('Calls ' + name + '()', types.map((t, i) => ({ label: t, value: String(args[i] != null ? args[i] : '?') })));
 }
 
 // ── Cross-device tunnel + copy buttons (work regardless of wallet state) ─────
@@ -952,7 +1023,7 @@ if (!window.ethereum) {
   setState('no-wallet');
 } else {
   renderSummary();
-  initDecoding();
+  renderWhatThisDoes().catch(() => {});
   document.getElementById('btn').addEventListener('click', onConnect);
   document.getElementById('retry-btn').addEventListener('click', () => {
     setState('ready');
