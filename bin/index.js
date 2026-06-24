@@ -222,6 +222,51 @@ async function probeUrl(url) {
   } catch { return false; }
 }
 
+export function createTunnelController(port, deps = {}) {
+  const read      = deps.readState       || readState;
+  const write     = deps.writeState      || writeState;
+  const alive     = deps.isPidAlive      || isPidAlive;
+  const startProc = deps.startCloudflared || startCloudflared;
+  const probe     = deps.probeUrl        || probeUrl;
+  const now       = deps.now             || (() => Date.now());
+  const log       = deps.log             || (() => {});
+  return {
+    async start() {
+      const t = now();
+      const state = read();
+      const decision = decideTunnelAction(state, port, t, alive(state && state.pid));
+      if (decision.action === 'reuse') {
+        write({ ...state, lastUsedAt: t });
+        log(`reusing tunnel ${decision.url}`);
+        return { url: decision.url };
+      }
+      if (decision.action === 'replace' && decision.pid) {
+        try { process.kill(decision.pid); } catch {}
+      }
+      const res = await startProc(port);
+      if (!res) return { error: 'could not start tunnel' };
+      write({ port, url: res.url, pid: res.pid, startedAt: t, lastUsedAt: t });
+      log(`started tunnel ${res.url}`);
+      return { url: res.url };
+    },
+    async check() {
+      const state = read();
+      if (!state || !state.url) return { reachable: false };
+      return { reachable: await probe(state.url) };
+    },
+  };
+}
+
+export function stopTunnel(deps = {}) {
+  const read  = deps.readState  || readState;
+  const clear = deps.clearState || clearState;
+  const kill  = deps.kill       || (pid => process.kill(pid));
+  const state = read();
+  if (state && state.pid) { try { kill(state.pid); } catch {} }
+  clear();
+  return state ? state.url : null;
+}
+
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
 export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {

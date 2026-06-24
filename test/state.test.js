@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readState, writeState, clearState, isPidAlive, decideTunnelAction, TUNNEL_TTL_MS } from '../bin/index.js';
+import { readState, writeState, clearState, isPidAlive, decideTunnelAction, TUNNEL_TTL_MS, stopTunnel } from '../bin/index.js';
 
 let dir;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'aws-')); process.env.AGENT_WALLET_SIGNER_HOME = dir; });
@@ -56,4 +56,13 @@ test('decideTunnelAction: dead pid -> start', () => {
 test('decideTunnelAction: live but different port -> start', () => {
   const state = { port: 9999, url: 'u', pid: 5, startedAt: 0, lastUsedAt: 1000 };
   assert.equal(decideTunnelAction(state, 8456, 1000, true).action, 'start');
+});
+
+test('stopTunnel kills the tracked pid and clears state', () => {
+  let killed = null;
+  writeState({ port: 8456, url: 'https://x.trycloudflare.com', pid: 123, startedAt: 0, lastUsedAt: 0 });
+  const url = stopTunnel({ kill: pid => { killed = pid; } });
+  assert.equal(killed, 123);
+  assert.equal(url, 'https://x.trycloudflare.com');
+  assert.equal(readState(), null);
 });
