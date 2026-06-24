@@ -431,6 +431,9 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
     .decode-row { display: flex; gap: 1rem; padding: 0.15rem 0; }
     .decode-key { color: #64748b; min-width: 80px; flex-shrink: 0; }
     .decode-val { color: #93c5fd; word-break: break-all; }
+    .copy-mini { width: auto; background: none; border: none; color: #64748b; cursor: pointer;
+                 padding: 0 0 0 0.35rem; font-size: 0.8rem; vertical-align: baseline; }
+    .copy-mini:hover { color: #60a5fa; opacity: 1; }
     button { width: 100%; padding: 0.75rem; border-radius: 8px; border: none;
              font-size: 0.9375rem; font-weight: 600; cursor: pointer;
              background: #3b82f6; color: #fff; transition: opacity 0.15s; }
@@ -795,14 +798,12 @@ function showWhat(title, fields) {
   el.style.display = 'block';
   el.innerHTML = rows.map(f => {
     const addr = isAddr(f.value);
-    const disp = addr ? awsTrunc(String(f.value)) : String(f.value);
-    const attrs = 'class="decode-val' + (addr ? ' copyable' : '') + '"' +
-      (addr ? ' data-copy="' + esc(String(f.value)) + '" title="Click to copy"' : '') +
-      (f.danger ? ' style="color:#fca5a5"' : '');
+    const copyBtn = addr ? ' <button class="copy-mini" data-copy="' + esc(String(f.value)) + '" title="Copy address">⧉</button>' : '';
     return '<div class="decode-row"><span class="decode-key">' + esc(f.label) + '</span>' +
-           '<span ' + attrs + '>' + esc(disp) + '</span></div>';
+           '<span class="decode-val"' + (f.danger ? ' style="color:#fca5a5"' : '') + '>' +
+           esc(String(f.value)) + copyBtn + '</span></div>';
   }).join('');
-  el.querySelectorAll('.copyable').forEach(c => c.addEventListener('click', () => copyText(c.dataset.copy, null)));
+  el.querySelectorAll('.copy-mini').forEach(b => b.addEventListener('click', () => copyText(b.dataset.copy, b)));
 }
 
 async function resolveSignature(selector) {
