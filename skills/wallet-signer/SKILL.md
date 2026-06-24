@@ -15,7 +15,7 @@ description: >-
 
 # wallet-signer
 
-`agent-wallet-signer` is a CLI that surfaces a signing request to the user in a
+`request-wallet-sign` is a CLI that surfaces a signing request to the user in a
 local browser page. You pass a fully-formed request as one JSON argument; the
 user connects their browser wallet, reviews the decoded details, and approves;
 the wallet signs/broadcasts; you get the result back on **stdout**. You never
@@ -24,7 +24,7 @@ touch a private key.
 ## Invoke
 
 ```bash
-npx agent-wallet-signer '<request JSON>'
+npx request-wallet-sign '<request JSON>'
 ```
 
 (In this repo, equivalently: `node bin/index.js '<request JSON>'`.)
@@ -88,7 +88,7 @@ Result: `{"signature":"0x…","chainId":1}`
 Parse stdout as JSON. Branch on the keys, not on guesses:
 
 ```bash
-out=$(npx agent-wallet-signer '<request JSON>') || { echo "user did not complete"; exit 1; }
+out=$(npx request-wallet-sign '<request JSON>') || { echo "user did not complete"; exit 1; }
 # $out is {"hash":...} for a transaction, or {"signature":...} for a signing op
 ```
 
@@ -103,8 +103,8 @@ a provider over HTTPS). The page has a **"📱 Sign on another device"** button
 that starts a Cloudflare tunnel on demand, or you can pre-start it:
 
 ```bash
-npx agent-wallet-signer --tunnel '<request JSON>'      # tunnel ready on page load
-npx agent-wallet-signer --stop-tunnel                  # tear down the shared tunnel
+npx request-wallet-sign --tunnel '<request JSON>'      # tunnel ready on page load
+npx request-wallet-sign --stop-tunnel                  # tear down the shared tunnel
 ```
 
 The tunnel is **reused across invocations**, so issuing several requests in a row

@@ -1,10 +1,10 @@
 {
-  "name": "agent-wallet-signer",
+  "name": "request-wallet-sign",
   "version": "0.1.0",
   "description": "Let AI agents surface wallet signing requests to users via a local browser page",
   "type": "module",
   "engines": { "node": ">=18" },
-  "bin": { "agent-wallet-signer": "./bin/index.js" },
+  "bin": { "request-wallet-sign": "./bin/index.js" },
   "scripts": {
     "test": "node --test",
     "prepublishOnly": "node --test"

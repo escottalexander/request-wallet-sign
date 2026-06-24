@@ -15,7 +15,7 @@ export function parseRequest(argv) {
   // The request JSON is the first argument that isn't a --flag.
   const raw = argv.slice(2).find(a => !a.startsWith('--'));
   if (!raw) {
-    throw new Error("Usage: agent-wallet-signer [--tunnel] '<request JSON>'");
+    throw new Error("Usage: request-wallet-sign [--tunnel] '<request JSON>'");
   }
 
   let parsed;
@@ -62,7 +62,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, openSync, closeSync } f
 import { join } from 'node:path';
 
 function stateDir() {
-  return process.env.AGENT_WALLET_SIGNER_HOME || join(homedir(), '.agent-wallet-signer');
+  return process.env.REQUEST_WALLET_SIGN_HOME || join(homedir(), '.request-wallet-sign');
 }
 function stateFilePath() { return join(stateDir(), 'state.json'); }
 
@@ -1049,11 +1049,11 @@ export function escHtml(str) {
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const PREFERRED_PORT = 8456; // stable port enables cloudflared tunnel reuse across runs
 
-export const HELP_TEXT = `agent-wallet-signer — surface a wallet signing request to a user via a browser page
+export const HELP_TEXT = `request-wallet-sign — surface a wallet signing request to a user via a browser page
 
 USAGE
-  npx agent-wallet-signer [--tunnel] '<request JSON>'
-  npx agent-wallet-signer --stop-tunnel
+  npx request-wallet-sign [--tunnel] '<request JSON>'
+  npx request-wallet-sign --stop-tunnel
 
 OPTIONS
   --tunnel       Pre-start the cross-device HTTPS tunnel as soon as the page
@@ -1068,7 +1068,7 @@ The request JSON is a single argument. Operation type is inferred:
   typedData → eth_signTypedData_v4 · message → personal_sign · otherwise → eth_sendTransaction
 
 Cross-device tunnels are REUSED across invocations (recorded in
-~/.agent-wallet-signer/state.json) so signing many transactions does not create
+~/.request-wallet-sign/state.json) so signing many transactions does not create
 many tunnels. The shared tunnel is one background process, reaped after 10
 minutes idle or immediately with --stop-tunnel.
 

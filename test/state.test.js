@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { readState, writeState, clearState, isPidAlive, decideTunnelAction, TUNNEL_TTL_MS, stopTunnel } from '../bin/index.js';
 
 let dir;
-beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'aws-')); process.env.AGENT_WALLET_SIGNER_HOME = dir; });
-afterEach(() => { delete process.env.AGENT_WALLET_SIGNER_HOME; rmSync(dir, { recursive: true, force: true }); });
+beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'aws-')); process.env.REQUEST_WALLET_SIGN_HOME = dir; });
+afterEach(() => { delete process.env.REQUEST_WALLET_SIGN_HOME; rmSync(dir, { recursive: true, force: true }); });
 
 test('readState returns null when no file', () => {
   assert.equal(readState(), null);

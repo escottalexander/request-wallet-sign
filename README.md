@@ -1,4 +1,4 @@
-# agent-wallet-signer
+# request-wallet-sign
 
 A standalone `npx` utility that lets AI agents surface wallet signing requests to a user via a local browser page. The agent passes a fully-constructed transaction as a CLI argument; a local HTTP server serves a browser page pre-populated with the details. The user connects their browser wallet (MetaMask, Rabby, Coinbase Wallet, …), reviews the decoded transaction, and approves. The wallet signs/broadcasts, and the resulting hash or signature is returned to the agent on stdout.
 
@@ -7,14 +7,14 @@ The agent never holds a private key.
 ## Usage
 
 ```bash
-npx agent-wallet-signer '<request JSON>'
+npx request-wallet-sign '<request JSON>'
 ```
 
 ```bash
 # Sign from another device (phone, tablet, another computer):
 # Click the "📱 Sign on another device" button in the page, or pre-start the
 # tunnel on page load with --tunnel:
-npx agent-wallet-signer --tunnel '<request JSON>'
+npx request-wallet-sign --tunnel '<request JSON>'
 ```
 
 On success, prints `{"hash":"0x…","chainId":N}` (or `{"signature":"0x…","chainId":N}`) to stdout and exits 0. On rejection, missing wallet, or a 5-minute timeout, prints to stderr and exits 1.
@@ -27,10 +27,10 @@ To sign from a phone, tablet, or another computer, the page has a **"📱 Sign o
 
 Pass `--tunnel` to pre-start the tunnel automatically on page load (handy for agents that already know they need cross-device).
 
-**Reuse:** the tunnel is recorded in `~/.agent-wallet-signer/state.json` and **reused across invocations**, so signing many transactions in a row does not create many tunnels (which would get rate-limited by Cloudflare). It is a single shared background process, reaped after 10 minutes idle or immediately with:
+**Reuse:** the tunnel is recorded in `~/.request-wallet-sign/state.json` and **reused across invocations**, so signing many transactions in a row does not create many tunnels (which would get rate-limited by Cloudflare). It is a single shared background process, reaped after 10 minutes idle or immediately with:
 
 ```bash
-npx agent-wallet-signer --stop-tunnel
+npx request-wallet-sign --stop-tunnel
 ```
 
 **Security note:** an active tunnel makes the signing page reachable by anyone holding the random (unguessable) URL — they can see transaction details but cannot sign without the user's wallet. Nothing leaves your machine until you start a tunnel.
