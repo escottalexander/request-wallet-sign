@@ -277,9 +277,10 @@ export function stopTunnel(deps = {}) {
 
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
-export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {
+export function buildHtml(req, port, networkUrl, opts = {}) {
   const label = req.label || 'Sign Transaction';
   const description = req.description || '';
+  const autoTunnel = !!opts.autoTunnel;
 
   const CHAINS = {
     1:       { name: 'Ethereum',      explorer: 'https://etherscan.io',             rpc: 'https://eth.llamarpc.com',                       symbol: 'ETH'  },
@@ -304,26 +305,6 @@ export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {
     11155420:{ name: 'Optimism Sepolia',  explorer: 'https://sepolia-optimism.etherscan.io', rpc: 'https://sepolia.optimism.io',                 symbol: 'ETH' },
     421614:  { name: 'Arbitrum Sepolia',  explorer: 'https://sepolia.arbiscan.io',           rpc: 'https://sepolia-rollup.arbitrum.io/rpc',      symbol: 'ETH' },
   };
-
-  // Connectivity banner: a live tunnel takes over entirely; otherwise show the
-  // LAN address (with a caveat if a requested tunnel was throttled/unconfirmed).
-  let connectivityHtml = '';
-  if (tunnelUrl) {
-    connectivityHtml = `<div class="network-info tunnel">
-    <span>&#x1f30e; Sign on any device:</span>
-    <a href="${escHtml(tunnelUrl)}" target="_blank">${escHtml(tunnelUrl)}</a>
-    <button class="icon-btn" id="copy-tunnel-btn" title="Copy public HTTPS URL">⧉ Copy</button>
-  </div>`;
-  } else if (networkUrl) {
-    const caveat = tunnelThrottled
-      ? `<div class="net-caveat">&#x26a0;&#xfe0f; The Cloudflare tunnel is currently throttled, so cross-device signing over HTTPS is unavailable right now. This same-network address works for devices on this Wi-Fi; re-run with <code>--tunnel</code> later to sign from anywhere.</div>`
-      : '';
-    connectivityHtml = `<div class="network-info">
-    <span>&#x1f4f1; Same network:</span>
-    <a href="${escHtml(networkUrl)}" target="_blank">${escHtml(networkUrl)}</a>
-    <button class="icon-btn" id="copy-url-btn" title="Copy network URL">⧉ Copy</button>
-  </div>${caveat}`;
-  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -386,6 +367,7 @@ export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {
     .network-info a:hover { text-decoration: underline; }
     .network-info.tunnel { background: #0d1e16; border-color: #1e5f3a; }
     .network-info.tunnel a { color: #4ade80; }
+    .cross-device { margin-top: 1.25rem; }
     .net-caveat { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 8px;
                   background: #2a1e08; border: 1px solid #5f4a1e; color: #fbbf24;
                   font-size: 0.75rem; line-height: 1.4; }
@@ -434,13 +416,30 @@ export function buildHtml(req, port, networkUrl, tunnelUrl, tunnelThrottled) {
     </p>
   </div>
 
-  ${connectivityHtml}
+  <div class="cross-device">
+    <button class="icon-btn" id="cross-device-btn">📱 Sign on another device</button>
+    <div id="cd-panel" style="display:none">
+      <div class="network-info tunnel" id="cd-tunnel-row" style="display:none">
+        <span>🌎 Open on your device:</span>
+        <a id="cd-tunnel-link" href="#" target="_blank"></a>
+        <button class="icon-btn" id="copy-tunnel-btn">⧉ Copy</button>
+      </div>
+      <button class="icon-btn" id="cd-check-btn" style="display:none">Check reachability</button>
+      <div id="cd-status" class="net-caveat" style="display:none"></div>
+      ${networkUrl ? `<div class="network-info">
+        <span>📱 Same network:</span>
+        <a href="${escHtml(networkUrl)}" target="_blank">${escHtml(networkUrl)}</a>
+        <button class="icon-btn" id="copy-url-btn">⧉ Copy</button>
+      </div>` : ''}
+    </div>
+  </div>
 
 </div>
 <script type="module">
 // ── Injected by CLI ────────────────────────────────────────────────────────
 const REQUEST    = ${JSON.stringify(req).replace(/<\/script>/gi, '<\\/script>')};
 const RESULT_URL = '/result';
+const AUTO_TUNNEL = ${autoTunnel};
 const CHAIN_META = ${JSON.stringify(CHAINS).replace(/<\/script>/gi, '<\\/script>')};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -793,19 +792,64 @@ async function initDecoding() {
   }
 }
 
-// ── Copy buttons (work regardless of wallet state) ──────────────────────────
-function wireCopyUrl(btnId) {
-  const btn = document.getElementById(btnId);
-  if (!btn) return;
-  const url = btn.closest('.network-info').querySelector('a').getAttribute('href');
-  btn.addEventListener('click', e => copyText(url, e.currentTarget));
+// ── Cross-device tunnel + copy buttons (work regardless of wallet state) ─────
+function showTunnel(url) {
+  document.getElementById('cd-tunnel-link').href = url;
+  document.getElementById('cd-tunnel-link').textContent = url;
+  document.getElementById('cd-tunnel-row').style.display = 'flex';
+  document.getElementById('cd-check-btn').style.display = 'block';
 }
-wireCopyUrl('copy-tunnel-btn');
-wireCopyUrl('copy-url-btn');
+function showStatus(msg) {
+  const el = document.getElementById('cd-status');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+async function startTunnel() {
+  const btn = document.getElementById('cross-device-btn');
+  document.getElementById('cd-panel').style.display = 'block';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Starting secure tunnel…';
+  try {
+    const res = await fetch('/tunnel/start', { method: 'POST' }).then(r => r.json());
+    if (res.url) {
+      showTunnel(res.url);
+      btn.style.display = 'none';
+    } else {
+      showStatus('Could not start a tunnel right now (Cloudflare may be throttled). Use the same-network address below, or try again later.');
+      btn.disabled = false;
+      btn.textContent = '📱 Sign on another device';
+    }
+  } catch {
+    showStatus('Tunnel request failed. Try again.');
+    btn.disabled = false;
+    btn.textContent = '📱 Sign on another device';
+  }
+}
+async function checkTunnel() {
+  const btn = document.getElementById('cd-check-btn');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.innerHTML = '<span class="spinner"></span>Checking…';
+  const { reachable } = await fetch('/tunnel/check', { method: 'POST' }).then(r => r.json());
+  btn.disabled = false;
+  btn.textContent = orig;
+  showStatus(reachable
+    ? '✓ Tunnel is reachable — open the link on your other device.'
+    : '⚠ Not reachable yet (DNS may still be propagating, or Cloudflare is throttling). Wait a few seconds and check again.');
+}
+const cdBtn = document.getElementById('cross-device-btn');
+if (cdBtn) cdBtn.addEventListener('click', startTunnel);
+const cdCheck = document.getElementById('cd-check-btn');
+if (cdCheck) cdCheck.addEventListener('click', checkTunnel);
+const copyTunnelBtn = document.getElementById('copy-tunnel-btn');
+if (copyTunnelBtn) copyTunnelBtn.addEventListener('click', e =>
+  copyText(document.getElementById('cd-tunnel-link').href, e.currentTarget));
+const copyUrlBtn = document.getElementById('copy-url-btn');
+if (copyUrlBtn) copyUrlBtn.addEventListener('click', e =>
+  copyText(e.currentTarget.closest('.network-info').querySelector('a').getAttribute('href'), e.currentTarget));
 const copyAllBtn = document.getElementById('copy-all-btn');
-if (copyAllBtn) {
-  copyAllBtn.addEventListener('click', e => copyText(txDataText(), e.currentTarget));
-}
+if (copyAllBtn) copyAllBtn.addEventListener('click', e => copyText(txDataText(), e.currentTarget));
+if (AUTO_TUNNEL) startTunnel();
 
 // ── Init ───────────────────────────────────────────────────────────────────
 if (!window.ethereum) {

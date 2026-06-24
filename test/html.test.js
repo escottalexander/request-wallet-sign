@@ -149,32 +149,23 @@ test('HTML marks "to" value as copyable', () => {
 
 test('HTML includes network URL copy button when networkUrl provided', () => {
   const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000');
-  assert.ok(html.includes('copy-url-btn'));
-  assert.ok(html.includes('http://192.168.1.5:3000'));
+  assert.ok(html.includes('id="copy-url-btn"'));
 });
 
-test('HTML shows the tunnel URL when provided', () => {
-  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', 'https://foo-bar.trycloudflare.com');
-  assert.ok(html.includes('https://foo-bar.trycloudflare.com'));
-  assert.ok(html.includes('id="copy-tunnel-btn"'));
-});
-
-test('HTML omits tunnel section when no tunnel URL', () => {
+test('HTML shows the cross-device button', () => {
   const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000');
-  assert.ok(!html.includes('id="copy-tunnel-btn"'));
+  assert.ok(html.includes('id="cross-device-btn"'));
 });
 
-test('HTML hides the LAN section when a tunnel URL is shown', () => {
-  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', 'https://foo-bar.trycloudflare.com');
-  assert.ok(html.includes('id="copy-tunnel-btn"'));   // tunnel shown
-  assert.ok(!html.includes('id="copy-url-btn"'));      // LAN section hidden
+test('HTML references the tunnel endpoints', () => {
+  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000');
+  assert.ok(html.includes('/tunnel/start'));
+  assert.ok(html.includes('/tunnel/check'));
 });
 
-test('HTML shows LAN URL with a throttle caveat when tunnel throttled', () => {
-  const html = buildHtml(makeReq(), 3000, 'http://192.168.1.5:3000', null, true);
-  assert.ok(html.includes('id="copy-url-btn"'));       // LAN shown
-  assert.ok(/throttl/i.test(html));                    // caveat present
-  assert.ok(!html.includes('id="copy-tunnel-btn"'));   // no tunnel link
+test('HTML auto-starts tunnel only when opts.autoTunnel is set', () => {
+  assert.ok(buildHtml(makeReq(), 3000, null, { autoTunnel: true }).includes('AUTO_TUNNEL = true'));
+  assert.ok(buildHtml(makeReq(), 3000, null).includes('AUTO_TUNNEL = false'));
 });
 
 test('HTML fee estimation falls back when eth_maxPriorityFeePerGas unavailable', () => {
