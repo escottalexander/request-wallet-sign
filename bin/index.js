@@ -128,14 +128,14 @@ export function getLocalNetworkIP() {
 
 import { createServer as createHttpServer } from 'node:http';
 
-export function startServer(port, html) {
+export function startServer(port, html, tunnel) {
   let resolveResult, rejectResult;
   const result = new Promise((res, rej) => {
     resolveResult = res;
     rejectResult = rej;
   });
 
-  const server = createHttpServer((req, res) => {
+  const server = createHttpServer(async (req, res) => {
     if (req.method === 'GET' && req.url === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
@@ -162,6 +162,14 @@ export function startServer(port, html) {
           }
         }
       });
+    } else if (req.method === 'POST' && req.url === '/tunnel/start' && tunnel) {
+      const out = await tunnel.start();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
+    } else if (req.method === 'POST' && req.url === '/tunnel/check' && tunnel) {
+      const out = await tunnel.check();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(out));
     } else {
       res.writeHead(404);
       res.end();

@@ -45,6 +45,20 @@ test('startServer resolves result promise on POST /result', async () => {
   close();
 });
 
+test('startServer routes /tunnel/start and /tunnel/check to the controller', async () => {
+  const port = await findAvailablePort();
+  const fakeTunnel = {
+    start: async () => ({ url: 'https://x.trycloudflare.com' }),
+    check: async () => ({ reachable: true }),
+  };
+  const { close } = startServer(port, '<html></html>', fakeTunnel);
+  const s = await (await fetch(`http://localhost:${port}/tunnel/start`, { method: 'POST' })).json();
+  assert.equal(s.url, 'https://x.trycloudflare.com');
+  const c = await (await fetch(`http://localhost:${port}/tunnel/check`, { method: 'POST' })).json();
+  assert.equal(c.reachable, true);
+  close();
+});
+
 test('startServer returns 404 for unknown routes', async () => {
   const port = await findAvailablePort();
   const { close } = startServer(port, '<html></html>');
