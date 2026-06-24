@@ -1,19 +1,38 @@
 {
   "name": "request-wallet-sign",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Let AI agents surface wallet signing requests to users via a local browser page",
   "type": "module",
-  "engines": { "node": ">=18" },
-  "bin": { "request-wallet-sign": "./bin/index.js" },
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "request-wallet-sign": "./bin/index.js"
+  },
   "scripts": {
     "test": "node --test",
     "prepublishOnly": "node --test"
   },
-  "files": ["bin/index.js"],
-  "keywords": ["wallet", "ethereum", "signing", "agent", "cli", "clear-signing", "erc-7730"],
+  "files": [
+    "bin/index.js"
+  ],
+  "keywords": [
+    "wallet",
+    "ethereum",
+    "signing",
+    "agent",
+    "cli",
+    "clear-signing",
+    "erc-7730"
+  ],
   "author": "Elliott Alexander",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/escottalexander/request-wallet-sign.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/escottalexander/request-wallet-sign.git"
+  },
   "homepage": "https://github.com/escottalexander/request-wallet-sign#readme",
-  "bugs": { "url": "https://github.com/escottalexander/request-wallet-sign/issues" }
+  "bugs": {
+    "url": "https://github.com/escottalexander/request-wallet-sign/issues"
+  }
 }
