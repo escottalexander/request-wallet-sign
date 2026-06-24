@@ -882,6 +882,7 @@ export function escHtml(str) {
 // ── Main orchestration ────────────────────────────────────────────────────────
 
 const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const PREFERRED_PORT = 8456; // stable port enables cloudflared tunnel reuse across runs
 
 export const HELP_TEXT = `agent-wallet-signer — surface a wallet signing request to a user via a browser page
 
@@ -910,42 +911,50 @@ export async function run(argv) {
     process.exit(0);
   }
 
-  let req, opts;
+  const opts = parseOptions(argv);
+
+  if (opts.stopTunnel) {
+    const url = stopTunnel();
+    process.stderr.write(url ? `stopped tunnel ${url}\n` : 'no tunnel was running\n');
+    process.exit(0);
+  }
+
+  let req;
   try {
     req = parseRequest(argv);
-    opts = parseOptions(argv);
   } catch (e) {
     process.stderr.write(e.message + '\n');
     process.exit(1);
   }
 
-  const port = await findAvailablePort();
+  const port = await choosePort(PREFERRED_PORT);
   const networkIP = getLocalNetworkIP();
   const networkUrl = networkIP ? `http://${networkIP}:${port}` : null;
 
-  const html = buildHtml(req, port, networkUrl);
-  const { result, close } = startServer(port, html);
-  const cleanup = () => { close(); };
+  const tunnel = createTunnelController(port, { log: m => process.stderr.write(`tunnel: ${m}\n`) });
+  const html = buildHtml(req, port, networkUrl, { autoTunnel: opts.tunnel });
+  const { result, close } = startServer(port, html, tunnel);
 
   const timeout = setTimeout(() => {
-    cleanup();
+    close();
     process.stderr.write('timeout: user did not respond\n');
     process.exit(1);
   }, TIMEOUT_MS);
 
   if (networkUrl) process.stderr.write(`same-network URL: ${networkUrl}\n`);
+  process.stderr.write('cross-device: use the "Sign on another device" button in the page\n');
   openBrowser(`http://localhost:${port}`);
 
   result
     .then(data => {
       clearTimeout(timeout);
-      cleanup();
+      close(); // NOTE: do NOT kill the tunnel — it persists for reuse
       process.stdout.write(JSON.stringify(data) + '\n');
       process.exit(0);
     })
     .catch(e => {
       clearTimeout(timeout);
-      cleanup();
+      close();
       process.stderr.write((e.message ?? String(e)) + '\n');
       process.exit(1);
     });
