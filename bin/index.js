@@ -864,13 +864,19 @@ function resolvePath(args, path) {
 }
 
 function findDescriptorPath(idx, chainId, to) {
+  // The 'to' arg is lowercased by the caller. Registry index keys are often
+  // EIP-55 checksummed, so match addresses case-insensitively.
   try {
     if (Array.isArray(idx)) {
       const hit = idx.find(e => String(e.chainId) === String(chainId) && (e.address || '').toLowerCase() === to);
       return (hit && (hit.path || hit.file)) || null;
     }
-    const byChain = idx[String(chainId)] || idx[chainId];
-    if (byChain) return byChain[to] || null;
+    const byChain = idx[String(chainId)] || idx[chainId] || idx;
+    if (byChain && typeof byChain === 'object') {
+      for (const [k, v] of Object.entries(byChain)) {
+        if (k.toLowerCase() === to) return (v && (v.path || v.file)) || v || null;
+      }
+    }
   } catch {}
   return null;
 }
