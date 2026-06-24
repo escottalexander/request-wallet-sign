@@ -53,7 +53,7 @@ export function parseRequest(argv) {
 
 import { createServer as createNetServer } from 'node:net';
 import { networkInterfaces, homedir } from 'node:os';
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, openSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 
 function stateDir() {
@@ -201,25 +201,44 @@ export function extractTunnelUrl(text) {
   return m ? m[0] : null;
 }
 
+function cloudflaredLogPath() { return join(stateDir(), 'cloudflared.log'); }
+
 // Spawn a DETACHED cloudflared quick tunnel that survives CLI exit (for reuse).
-// Resolves { url, pid } once the URL is printed, or null on failure/timeout.
+// cloudflared's stdio goes to a LOG FILE — not parent pipes — so the process is
+// not killed by SIGPIPE when the CLI exits after signing. We scrape the URL by
+// polling that log file. Resolves { url, pid } or null on failure/timeout.
 function startCloudflared(port) {
   return new Promise(resolve => {
-    const proc = spawn('npx', ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`],
-      { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let buf = '', settled = false;
-    const finish = url => {
+    let settled = false;
+    const finish = (proc, url) => {
       if (settled) return;
       settled = true;
-      if (url) { proc.unref(); resolve({ url, pid: proc.pid }); }
+      if (url) resolve({ url, pid: proc.pid });
       else { try { proc.kill(); } catch {} resolve(null); }
     };
-    const onData = c => { buf += c.toString(); const u = extractTunnelUrl(buf); if (u) finish(u); };
-    proc.stdout.on('data', onData);
-    proc.stderr.on('data', onData);
-    proc.on('exit', () => finish(null));
-    proc.on('error', () => finish(null));
-    setTimeout(() => finish(null), 25000);
+    try {
+      mkdirSync(stateDir(), { recursive: true });
+      const logPath = cloudflaredLogPath();
+      const fd = openSync(logPath, 'w');
+      const proc = spawn('npx', ['-y', 'cloudflared', 'tunnel', '--url', `http://127.0.0.1:${port}`],
+        { detached: true, stdio: ['ignore', fd, fd] });
+      closeSync(fd); // child holds its own dup; parent doesn't need it
+      proc.on('error', () => finish(proc, null));
+      proc.unref();
+      const deadline = Date.now() + 25000;
+      const tick = () => {
+        if (settled) return;
+        let txt = '';
+        try { txt = readFileSync(logPath, 'utf8'); } catch {}
+        const u = extractTunnelUrl(txt);
+        if (u) return finish(proc, u);
+        if (Date.now() > deadline) return finish(proc, null);
+        setTimeout(tick, 400);
+      };
+      setTimeout(tick, 400);
+    } catch {
+      resolve(null);
+    }
   });
 }
 
@@ -249,7 +268,7 @@ export function createTunnelController(port, deps = {}) {
         return { url: decision.url };
       }
       if (decision.action === 'replace' && decision.pid) {
-        try { process.kill(decision.pid); } catch {}
+        killTunnelTree(decision.pid);
       }
       const res = await startProc(port);
       if (!res) return { error: 'could not start tunnel' };
@@ -265,10 +284,18 @@ export function createTunnelController(port, deps = {}) {
   };
 }
 
+// Kill the cloudflared process GROUP. It is spawned detached (its own group
+// leader, pgid === pid), so a negative pid reaches the npx wrapper AND the real
+// cloudflared child; killing just the pid would orphan the child.
+function killTunnelTree(pid) {
+  try { process.kill(-pid); } catch {}
+  try { process.kill(pid); } catch {}
+}
+
 export function stopTunnel(deps = {}) {
   const read  = deps.readState  || readState;
   const clear = deps.clearState || clearState;
-  const kill  = deps.kill       || (pid => process.kill(pid));
+  const kill  = deps.kill       || killTunnelTree;
   const state = read();
   if (state && state.pid) { try { kill(state.pid); } catch {} }
   clear();
