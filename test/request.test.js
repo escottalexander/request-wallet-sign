@@ -57,12 +57,10 @@ test('typedData wins over message when both present', () => {
   assert.equal(req._type, 'signTypedData');
 });
 
-test('preserves label and description', () => {
-  const req = parseRequest(['node', 's', JSON.stringify({
-    chainId: 1, to: '0xabc', label: 'My Label', description: 'My Desc'
-  })]);
-  assert.equal(req.label, 'My Label');
-  assert.equal(req.description, 'My Desc');
+test('parseRequest strips agent-supplied label and description', () => {
+  const req = parseRequest(['n','s', JSON.stringify({ chainId: 1, to: '0xabc', label: 'evil', description: 'lies' })]);
+  assert.equal(req.label, undefined);
+  assert.equal(req.description, undefined);
 });
 
 test('defaults value to 0x0 for sendTransaction', () => {

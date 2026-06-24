@@ -41,6 +41,11 @@ export function parseRequest(argv) {
 
   const req = { ...parsed, _type };
 
+  // Agent-supplied free text is untrusted and must never be shown as if it
+  // described the transaction; the page derives its summary from the data.
+  delete req.label;
+  delete req.description;
+
   // Default value for sendTransaction
   if (_type === 'sendTransaction' && req.value === undefined) {
     req.value = '0x0';
@@ -314,8 +319,6 @@ export function stopTunnel(deps = {}) {
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
 export function buildHtml(req, port, networkUrl, opts = {}) {
-  const label = req.label || 'Sign Transaction';
-  const description = req.description || '';
   const autoTunnel = !!opts.autoTunnel;
 
   const CHAINS = {
@@ -347,7 +350,7 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${escHtml(label)}</title>
+  <title>Review &amp; sign</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -422,10 +425,9 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
 
   <div data-show="ready">
     <div class="card-header">
-      <h1>${escHtml(label)}</h1>
+      <h1 id="headline">Review transaction</h1>
       <button class="icon-btn" id="copy-all-btn" title="Copy full transaction data">⧉ Copy all</button>
     </div>
-    ${description ? `<p class="desc">${escHtml(description)}</p>` : ''}
     <div class="summary" id="summary"></div>
     <div class="decode" id="decode"></div>
     <button id="btn">Connect Wallet</button>

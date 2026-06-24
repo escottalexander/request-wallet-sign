@@ -22,9 +22,11 @@ test('HTML contains relative RESULT_URL', () => {
   assert.ok(html.includes("'/result'"));
 });
 
-test('HTML contains label in page title', () => {
-  const html = buildHtml(makeReq({ label: 'My Signing Request' }), 3000);
-  assert.ok(html.includes('My Signing Request'));
+test('HTML has a data-derived headline element and no agent label', () => {
+  const html = buildHtml(makeReq({ label: 'Totally Safe', description: 'trust me' }), 3000);
+  assert.ok(html.includes('id="headline"'));
+  assert.ok(!html.includes('Totally Safe'));
+  assert.ok(!html.includes('trust me'));
 });
 
 test('HTML contains connect wallet button with id=btn', () => {
@@ -37,12 +39,6 @@ test('HTML contains all required data-show sections', () => {
   for (const state of ['ready', 'waiting', 'done', 'error', 'no-wallet']) {
     assert.ok(html.includes(`data-show="${state}"`), `missing data-show="${state}"`);
   }
-});
-
-test('HTML escapes label to prevent XSS', () => {
-  const html = buildHtml(makeReq({ label: '<script>alert(1)</script>' }), 3000);
-  assert.ok(!html.includes('<script>alert(1)</script>'));
-  assert.ok(html.includes('&lt;script&gt;'));
 });
 
 test('HTML contains CHAIN_META global', () => {
