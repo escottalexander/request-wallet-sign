@@ -99,6 +99,19 @@ export function findAvailablePort() {
   });
 }
 
+export function isPortFree(port) {
+  return new Promise(resolve => {
+    const srv = createNetServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, '0.0.0.0', () => srv.close(() => resolve(true)));
+  });
+}
+
+export async function choosePort(preferred) {
+  if (await isPortFree(preferred)) return preferred;
+  return findAvailablePort();
+}
+
 export function getLocalNetworkIP() {
   const nets = networkInterfaces();
   for (const ifaces of Object.values(nets)) {
