@@ -52,7 +52,31 @@ export function parseRequest(argv) {
 // ── Port finding ──────────────────────────────────────────────────────────────
 
 import { createServer as createNetServer } from 'node:net';
-import { networkInterfaces } from 'node:os';
+import { networkInterfaces, homedir } from 'node:os';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+
+function stateDir() {
+  return process.env.AGENT_WALLET_SIGNER_HOME || join(homedir(), '.agent-wallet-signer');
+}
+function stateFilePath() { return join(stateDir(), 'state.json'); }
+
+export function readState() {
+  try { return JSON.parse(readFileSync(stateFilePath(), 'utf8')); }
+  catch { return null; }
+}
+export function writeState(state) {
+  mkdirSync(stateDir(), { recursive: true });
+  writeFileSync(stateFilePath(), JSON.stringify(state));
+}
+export function clearState() {
+  try { rmSync(stateFilePath()); } catch {}
+}
+export function isPidAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return e.code === 'EPERM'; } // alive but owned by another user
+}
 
 export function findAvailablePort() {
   return new Promise((resolve, reject) => {
