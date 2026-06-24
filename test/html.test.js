@@ -123,6 +123,13 @@ test('HTML decode pipeline uses ERC-7730, openchain signature lookup, and viem',
   assert.ok(html.includes('tryCalldataDescriptor'));
 });
 
+test('HTML sends type-4 and relays authorizationList for EIP-7702', () => {
+  const html = buildHtml(makeReq(), 3000);
+  assert.ok(html.includes("'0x4'"));                 // type-4 selected when auth present
+  assert.ok(html.includes('tx.authorizationList'));  // relayed through eth_sendTransaction
+  assert.ok(html.includes('Authorize account delegation')); // surfaced in the decode
+});
+
 test('HTML formats value as ETH not wei', () => {
   const html = buildHtml(makeReq(), 3000);
   assert.ok(html.includes('formatEther'));

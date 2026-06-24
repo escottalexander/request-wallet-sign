@@ -600,6 +600,7 @@ function txDataText() {
     out.valueEth = formatEther(REQUEST.value) + ' ' + (meta.symbol || 'ETH');
     if (REQUEST.data) out.data = REQUEST.data;
     if (REQUEST.gas) out.gas = REQUEST.gas;
+    if (REQUEST.authorizationList) out.authorizationList = REQUEST.authorizationList;
   } else if (REQUEST._type === 'signTypedData') {
     out.typedData = REQUEST.typedData;
   } else {
@@ -681,14 +682,19 @@ async function switchChain(account) {
 }
 
 async function buildTx(account) {
+  // An EIP-7702 authorizationList (e.g. relaying someone else's signed
+  // authorization) makes this a type-4 transaction; otherwise plain EIP-1559.
+  const authList = Array.isArray(REQUEST.authorizationList) && REQUEST.authorizationList.length
+    ? REQUEST.authorizationList : null;
   const tx = {
-    type: '0x2',
+    type: authList ? '0x4' : '0x2',
     from: account,
     chainId: hex(REQUEST.chainId),
     value: REQUEST.value || '0x0',
   };
   if (REQUEST.to)   tx.to   = REQUEST.to;
   if (REQUEST.data) tx.data = REQUEST.data;
+  if (authList)     tx.authorizationList = authList;
 
   // Gas limit
   if (REQUEST.gas) {
@@ -912,6 +918,19 @@ async function renderWhatThisDoes() {
   }
 
   const { to, data, value } = REQUEST;
+
+  // EIP-7702: this tx also installs account delegation(s) — the highest-impact
+  // part, so surface each delegate target up front (Details shows the full tx).
+  if (Array.isArray(REQUEST.authorizationList) && REQUEST.authorizationList.length) {
+    const fields = REQUEST.authorizationList.map((a, i) => ({
+      label: 'Delegate #' + (i + 1),
+      value: (a && a.address) ? a.address : '(unknown target)',
+      danger: true,
+    }));
+    if (to) fields.push({ label: 'Then calls', value: to });
+    showWhat('Authorize account delegation (EIP-7702)', fields);
+    return;
+  }
 
   // Contract deployment
   if (!to && data && data.length > 2) {

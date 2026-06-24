@@ -97,3 +97,10 @@ test('parseOptions detects --stop-tunnel flag', () => {
   assert.equal(parseOptions(['node', 's', '--stop-tunnel']).stopTunnel, true);
   assert.equal(parseOptions(['node', 's', '{}']).stopTunnel, false);
 });
+
+test('parseRequest preserves an EIP-7702 authorizationList', () => {
+  const auth = [{ chainId: 1, address: '0xdele', nonce: 0, yParity: 0, r: '0x', s: '0x' }];
+  const req = parseRequest(['n', 's', JSON.stringify({ chainId: 1, to: '0xabc', authorizationList: auth })]);
+  assert.equal(req._type, 'sendTransaction');
+  assert.deepEqual(req.authorizationList, auth);
+});
