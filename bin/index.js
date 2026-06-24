@@ -316,6 +316,64 @@ export function stopTunnel(deps = {}) {
   return state ? state.url : null;
 }
 
+// ── Clear-signing decode helpers (pure JS, injected into the browser page) ─────
+
+export const DECODE_HELPERS_JS = `
+function awsTrunc(a){ return a ? a.slice(0,6) + '\\u2026' + a.slice(-4) : '\\u2014'; }
+function awsFormatAmount(rawDecimal, decimals){
+  const d = BigInt(decimals||0); const neg = String(rawDecimal).startsWith('-');
+  let v = BigInt(neg ? String(rawDecimal).slice(1) : rawDecimal);
+  const base = 10n ** d; const whole = v / base; let frac = (v % base).toString().padStart(Number(d),'0').replace(/0+$/,'');
+  return (neg?'-':'') + whole.toString() + (frac ? '.' + frac : '');
+}
+function awsIsUnlimited(rawDecimal){ try { return BigInt(rawDecimal) >= (2n ** 255n); } catch { return false; } }
+function awsParseSignature(sig){
+  const m = String(sig).match(/^([^(]+)\\((.*)\\)$/); if(!m) return { name: String(sig), types: [] };
+  const types = m[2].trim() ? m[2].split(',').map(s=>s.trim()) : [];
+  return { name: m[1], types };
+}
+function awsPlaceholderTitle(opType){
+  return opType === 'personalSign' ? 'Review message'
+       : opType === 'signTypedData' ? 'Review typed-data signature'
+       : 'Review transaction';
+}
+function awsDescriptorIndexUrl(kind){
+  return 'https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master/registry/index.' + kind + '.json';
+}
+function awsFormatDescriptorField(format, value, params){
+  params = params || {};
+  if (format === 'tokenAmount' || format === 'amount'){
+    const dec = params.decimals != null ? params.decimals : 18;
+    const s = awsFormatAmount(String(value), dec);
+    return params.ticker ? s + ' ' + params.ticker : s;
+  }
+  if (format === 'addressName') return params.name ? params.name + ' (' + awsTrunc(String(value)) + ')' : String(value);
+  if (format === 'date'){ const n = Number(value); return Number.isFinite(n) ? new Date(n*1000).toISOString() : String(value); }
+  if (format === 'duration'){ const n = Number(value); return Number.isFinite(n) ? n + 's' : String(value); }
+  return String(value);
+}
+function awsDescribeCall(ctx){
+  const { signature, args } = ctx; const { name } = awsParseSignature(signature);
+  const sym = ctx.symbol || 'tokens'; const dec = ctx.decimals != null ? ctx.decimals : 18;
+  if (name === 'transfer' && args.length >= 2)
+    return { title: 'Send ' + awsFormatAmount(String(args[1]), dec) + ' ' + sym + ' to ' + awsTrunc(String(args[0])),
+             fields: [{label:'To', value:String(args[0])}, {label:'Amount', value: awsFormatAmount(String(args[1]),dec)+' '+sym}] };
+  if (name === 'transferFrom' && args.length >= 3)
+    return { title: 'Send ' + awsFormatAmount(String(args[2]), dec) + ' ' + sym + ' from ' + awsTrunc(String(args[0])) + ' to ' + awsTrunc(String(args[1])),
+             fields: [{label:'From', value:String(args[0])}, {label:'To', value:String(args[1])}, {label:'Amount', value: awsFormatAmount(String(args[2]),dec)+' '+sym}] };
+  if (name === 'approve' && args.length >= 2){
+    const unlimited = awsIsUnlimited(String(args[1]));
+    const amt = unlimited ? 'UNLIMITED ' + sym : awsFormatAmount(String(args[1]), dec) + ' ' + sym;
+    return { title: 'Approve ' + awsTrunc(String(args[0])) + ' to spend ' + amt,
+             fields: [{label:'Spender', value:String(args[0])}, {label:'Allowance', value: amt, danger: unlimited}] };
+  }
+  if (name === 'setApprovalForAll' && args.length >= 2 && (args[1] === true || args[1] === 'true'))
+    return { title: 'Allow ' + awsTrunc(String(args[0])) + ' to transfer ALL your NFTs',
+             fields: [{label:'Operator', value:String(args[0])}, {label:'Access', value:'ALL NFTs in this collection', danger:true}] };
+  return null;
+}
+`;
+
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
 export function buildHtml(req, port, networkUrl, opts = {}) {
