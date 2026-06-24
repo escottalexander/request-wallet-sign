@@ -1132,10 +1132,18 @@ export async function run(argv) {
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
-// Only execute when run directly (not when imported by tests).
+// Only execute when run directly (not when imported by tests). Resolve symlinks
+// on both sides: when launched via an installed bin (npx / global install),
+// process.argv[1] is a symlink in node_modules/.bin whose realpath is this file,
+// while import.meta.url is already the resolved path — comparing them raw fails.
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const isMain = process.argv[1] &&
-  new URL(import.meta.url).pathname === process.argv[1];
+let isMain = false;
+try {
+  isMain = !!process.argv[1] &&
+    realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch { isMain = false; }
 
 if (isMain) {
   run(process.argv);
