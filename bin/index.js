@@ -451,7 +451,7 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
     .card-header { display: flex; justify-content: space-between; align-items: flex-start;
                    gap: 1rem; margin-bottom: 0.5rem; }
     .card-header h1 { margin-bottom: 0; }
-    .raw-details { margin-top: 1rem; font-size: 0.8rem; }
+    .raw-details { margin: 1rem 0 1.75rem; font-size: 0.8rem; }
     .raw-details summary { cursor: pointer; color: #64748b; user-select: none; }
     .raw-details summary:hover { color: #94a3b8; }
     .raw-details pre { margin-top: 0.5rem; background: #0d1219; border: 1px solid #1e2235;
