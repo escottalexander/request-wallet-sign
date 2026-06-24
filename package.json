@@ -13,7 +13,7 @@
   "keywords": ["wallet", "ethereum", "signing", "agent", "cli", "clear-signing", "erc-7730"],
   "author": "Elliott Alexander",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/escottalexander/agent-wallet-signer.git" },
-  "homepage": "https://github.com/escottalexander/agent-wallet-signer#readme",
-  "bugs": { "url": "https://github.com/escottalexander/agent-wallet-signer/issues" }
+  "repository": { "type": "git", "url": "git+https://github.com/escottalexander/request-wallet-sign.git" },
+  "homepage": "https://github.com/escottalexander/request-wallet-sign#readme",
+  "bugs": { "url": "https://github.com/escottalexander/request-wallet-sign/issues" }
 }

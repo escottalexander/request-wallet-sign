@@ -1,5 +1,5 @@
 ---
-name: wallet-signer
+name: request-wallet-sign
 description: >-
   Get a human to sign or send an Ethereum transaction, message, or EIP-712
   typed-data with their own browser wallet (MetaMask, Rabby, Coinbase Wallet,
@@ -13,13 +13,13 @@ description: >-
   leaves their wallet.
 ---
 
-# wallet-signer
+# request-wallet-sign
 
-`request-wallet-sign` is a CLI that surfaces a signing request to the user in a
-local browser page. You pass a fully-formed request as one JSON argument; the
-user connects their browser wallet, reviews the decoded details, and approves;
-the wallet signs/broadcasts; you get the result back on **stdout**. You never
-touch a private key.
+`request-wallet-sign` is a published npm CLI that surfaces a signing request to
+the user in a local browser page. You pass a fully-formed request as one JSON
+argument; the user connects their browser wallet, reviews the decoded details,
+and approves; the wallet signs/broadcasts; you get the result back on
+**stdout**. You never touch a private key.
 
 ## Invoke
 
@@ -27,7 +27,7 @@ touch a private key.
 npx request-wallet-sign '<request JSON>'
 ```
 
-(In this repo, equivalently: `node bin/index.js '<request JSON>'`.)
+`npx` fetches the package automatically — no install step.
 
 The command **blocks until the user acts** (or a 5-minute timeout). On success it
 prints one line of JSON to stdout and exits `0`. On rejection / no wallet /
