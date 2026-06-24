@@ -78,6 +78,16 @@ export function isPidAlive(pid) {
   catch (e) { return e.code === 'EPERM'; } // alive but owned by another user
 }
 
+export const TUNNEL_TTL_MS = 10 * 60 * 1000;
+
+// Pure: caller passes `alive` (computed via isPidAlive) so this stays testable.
+export function decideTunnelAction(state, port, now, alive, ttl = TUNNEL_TTL_MS) {
+  if (!state || !state.url || !alive) return { action: 'start' };
+  if (now - state.lastUsedAt >= ttl) return { action: 'replace', pid: state.pid };
+  if (state.port !== port) return { action: 'start' };
+  return { action: 'reuse', url: state.url };
+}
+
 export function findAvailablePort() {
   return new Promise((resolve, reject) => {
     const srv = createNetServer();
