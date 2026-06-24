@@ -59,3 +59,39 @@ test('controller.check reports reachability of stored url', async () => {
   const c = createTunnelController(8456, deps);
   assert.deepEqual(await c.check(), { reachable: false });
 });
+
+test('controller.start clears stale state when cloudflared fails', async () => {
+  let cleared = false;
+  const c = createTunnelController(8456, {
+    now: () => 1000,
+    readState: () => ({ port: 8456, url: 'https://old.trycloudflare.com', pid: 9, startedAt: 0, lastUsedAt: 0 }),
+    isPidAlive: () => false,        // dead -> action 'start'
+    startCloudflared: async () => null, // cloudflared yields no URL
+    writeState: () => {},
+    clearState: () => { cleared = true; },
+    log: () => {},
+  });
+  const out = await c.start();
+  assert.ok(out.error);
+  assert.equal(cleared, true);
+});
+
+test('controller.check returns reachable:false when no state', async () => {
+  const c = createTunnelController(8456, { readState: () => null });
+  assert.deepEqual(await c.check(), { reachable: false });
+});
+
+test('controller.start kills the old pid on replace before starting', async () => {
+  const killed = [];
+  const c = createTunnelController(8456, {
+    now: () => 1000,
+    readState: () => ({ port: 8456, url: 'https://old.trycloudflare.com', pid: 77, startedAt: 0, lastUsedAt: -99999999 }), // stale -> replace
+    isPidAlive: () => true,
+    kill: pid => killed.push(pid),
+    startCloudflared: async () => ({ url: 'https://new.trycloudflare.com', pid: 78 }),
+    writeState: () => {},
+    log: () => {},
+  });
+  await c.start();
+  assert.deepEqual(killed, [77]);
+});

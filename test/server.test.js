@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findAvailablePort, startServer } from '../bin/index.js';
+import { findAvailablePort, startServer, getLocalNetworkIP } from '../bin/index.js';
 
 test('findAvailablePort returns a valid port number', async () => {
   const port = await findAvailablePort();
@@ -65,5 +65,25 @@ test('startServer returns 404 for unknown routes', async () => {
 
   const res = await fetch(`http://localhost:${port}/unknown`);
   assert.equal(res.status, 404);
+  close();
+});
+
+test('tunnel endpoints reject non-loopback clients', async () => {
+  const ip = getLocalNetworkIP();
+  if (!ip) return; // no LAN interface available; skip
+  const port = await findAvailablePort();
+  const fakeTunnel = { start: async () => ({ url: 'x' }), check: async () => ({ reachable: true }) };
+  const { close } = startServer(port, '<html></html>', fakeTunnel);
+  const res = await fetch(`http://${ip}:${port}/tunnel/start`, { method: 'POST' });
+  assert.equal(res.status, 403);
+  close();
+});
+
+test('tunnel endpoints allow loopback clients', async () => {
+  const port = await findAvailablePort();
+  const fakeTunnel = { start: async () => ({ url: 'https://x.trycloudflare.com' }), check: async () => ({ reachable: true }) };
+  const { close } = startServer(port, '<html></html>', fakeTunnel);
+  const res = await fetch(`http://127.0.0.1:${port}/tunnel/start`, { method: 'POST' });
+  assert.equal(res.status, 200);
   close();
 });

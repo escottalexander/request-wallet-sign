@@ -128,6 +128,11 @@ export function getLocalNetworkIP() {
 
 import { createServer as createHttpServer } from 'node:http';
 
+function isLoopbackReq(req) {
+  const a = req.socket.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
 export function startServer(port, html, tunnel) {
   let resolveResult, rejectResult;
   const result = new Promise((res, rej) => {
@@ -163,10 +168,12 @@ export function startServer(port, html, tunnel) {
         }
       });
     } else if (req.method === 'POST' && req.url === '/tunnel/start' && tunnel) {
+      if (!isLoopbackReq(req)) { res.writeHead(403); res.end(); return; }
       const out = await tunnel.start();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out));
     } else if (req.method === 'POST' && req.url === '/tunnel/check' && tunnel) {
+      if (!isLoopbackReq(req)) { res.writeHead(403); res.end(); return; }
       const out = await tunnel.check();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(out));
@@ -257,6 +264,8 @@ export function createTunnelController(port, deps = {}) {
   const probe     = deps.probeUrl        || probeUrl;
   const now       = deps.now             || (() => Date.now());
   const log       = deps.log             || (() => {});
+  const clear     = deps.clearState      || clearState;
+  const kill      = deps.kill            || killTunnelTree;
   return {
     async start() {
       const t = now();
@@ -268,10 +277,10 @@ export function createTunnelController(port, deps = {}) {
         return { url: decision.url };
       }
       if (decision.action === 'replace' && decision.pid) {
-        killTunnelTree(decision.pid);
+        kill(decision.pid);
       }
       const res = await startProc(port);
-      if (!res) return { error: 'could not start tunnel' };
+      if (!res) { clear(); return { error: 'could not start tunnel' }; }
       write({ port, url: res.url, pid: res.pid, startedAt: t, lastUsedAt: t });
       log(`started tunnel ${res.url}`);
       return { url: res.url };
