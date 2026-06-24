@@ -474,6 +474,9 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
     .network-info.tunnel { background: #0d1e16; border-color: #1e5f3a; }
     .network-info.tunnel a { color: #4ade80; }
     .cross-device { margin-top: 1.25rem; }
+    .cd-link { display: inline-block; margin-top: 0.75rem; color: #64748b; font-size: 0.8rem;
+               text-decoration: underline; cursor: pointer; }
+    .cd-link:hover { color: #94a3b8; }
     .net-caveat { margin-top: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 8px;
                   background: #2a1e08; border: 1px solid #5f4a1e; color: #fbbf24;
                   font-size: 0.75rem; line-height: 1.4; }
@@ -534,10 +537,13 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
       </div>
       <button class="icon-btn" id="cd-check-btn" style="display:none">Check reachability</button>
       <div id="cd-status" class="net-caveat" style="display:none"></div>
-      ${networkUrl ? `<div class="network-info">
-        <span>📱 Same network:</span>
-        <a href="${escHtml(networkUrl)}" target="_blank">${escHtml(networkUrl)}</a>
-        <button class="icon-btn" id="copy-url-btn">⧉ Copy</button>
+      ${networkUrl ? `<a href="#" id="cd-lan-toggle" class="cd-link">Or use a local-network address instead</a>
+      <div id="cd-lan" style="display:none">
+        <div class="network-info">
+          <span>📱 Same network:</span>
+          <a href="${escHtml(networkUrl)}" target="_blank">${escHtml(networkUrl)}</a>
+          <button class="icon-btn" id="copy-url-btn">⧉ Copy</button>
+        </div>
       </div>` : ''}
     </div>
   </div>
@@ -992,7 +998,7 @@ async function startTunnel() {
   const btn = document.getElementById('cross-device-btn');
   document.getElementById('cd-panel').style.display = 'block';
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>Starting secure tunnel…';
+  btn.innerHTML = '<span class="spinner"></span>Opening tunnel…';
   try {
     const res = await fetch('/tunnel/start', { method: 'POST' }).then(r => r.json());
     if (res.url) {
@@ -1025,6 +1031,12 @@ const cdBtn = document.getElementById('cross-device-btn');
 if (cdBtn) cdBtn.addEventListener('click', startTunnel);
 const cdCheck = document.getElementById('cd-check-btn');
 if (cdCheck) cdCheck.addEventListener('click', checkTunnel);
+const cdLanToggle = document.getElementById('cd-lan-toggle');
+if (cdLanToggle) cdLanToggle.addEventListener('click', e => {
+  e.preventDefault();
+  document.getElementById('cd-lan').style.display = 'block';
+  cdLanToggle.style.display = 'none';
+});
 const copyTunnelBtn = document.getElementById('copy-tunnel-btn');
 if (copyTunnelBtn) copyTunnelBtn.addEventListener('click', e =>
   copyText(document.getElementById('cd-tunnel-link').href, e.currentTarget));
