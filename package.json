@@ -1,6 +1,6 @@
 {
   "name": "request-wallet-sign",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Let AI agents surface wallet signing requests to users via a local browser page",
   "type": "module",
   "engines": {
