@@ -451,6 +451,12 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
     .card-header { display: flex; justify-content: space-between; align-items: flex-start;
                    gap: 1rem; margin-bottom: 0.5rem; }
     .card-header h1 { margin-bottom: 0; }
+    .raw-details { margin-top: 1rem; font-size: 0.8rem; }
+    .raw-details summary { cursor: pointer; color: #64748b; user-select: none; }
+    .raw-details summary:hover { color: #94a3b8; }
+    .raw-details pre { margin-top: 0.5rem; background: #0d1219; border: 1px solid #1e2235;
+                       border-radius: 8px; padding: 0.75rem; overflow-x: auto; color: #cbd5e1;
+                       white-space: pre-wrap; word-break: break-all; }
     /* Small auto-width buttons override the full-width default */
     .icon-btn { width: auto; padding: 0.4rem 0.7rem; font-size: 0.75rem; font-weight: 500;
                 background: #2d3148; color: #cbd5e1; border-radius: 6px; flex-shrink: 0;
@@ -487,9 +493,13 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
   <div data-show="ready">
     <div class="card-header">
       <h1 id="headline">Review transaction</h1>
-      <button class="icon-btn" id="copy-all-btn" title="Copy full transaction data">⧉ Copy all</button>
+      <button class="icon-btn" id="copy-all-btn" title="Copy the raw transaction">⧉ Copy raw tx</button>
     </div>
     <div id="what" class="summary" style="display:none"></div>
+    <details class="raw-details">
+      <summary>Details</summary>
+      <pre id="raw-tx"></pre>
+    </details>
     <button id="btn">Connect Wallet</button>
   </div>
 
@@ -1011,6 +1021,7 @@ if (!window.ethereum) {
   setState('no-wallet');
 } else {
   renderWhatThisDoes().catch(() => {});
+  document.getElementById('raw-tx').textContent = txDataText();
   document.getElementById('btn').addEventListener('click', onConnect);
   document.getElementById('retry-btn').addEventListener('click', () => {
     setState('ready');
