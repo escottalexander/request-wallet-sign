@@ -36,9 +36,11 @@ timeout / bad input it prints a message to stderr and exits `1`.
 ## Build the request
 
 `chainId` (an **integer**, e.g. `1` mainnet, `8453` Base, `11155111` Sepolia) is
-always required. `label` and `description` are optional but recommended — they
-are shown to the user, so write them as a clear, honest summary of what they're
-approving. The **operation type is inferred from shape** — do not add a `type`
+always required. You do **not** attach any human description — the page shows the
+user what the transaction actually does, decoded from its data (ERC-7730
+clear-signing where the contract is covered, otherwise function + token
+decoding). Your job is to get the on-chain fields right; the page speaks for
+itself. The **operation type is inferred from shape** — do not add a `type`
 field:
 
 - has `typedData` → `eth_signTypedData_v4`
@@ -50,7 +52,7 @@ All numeric on-chain fields are **hex strings** (wei, gas), not decimals.
 ### Send a transaction
 
 ```json
-{ "label": "Send 0.01 ETH to vitalik.eth", "chainId": 1,
+{ "chainId": 1,
   "to": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
   "value": "0x2386f26fc10000" }
 ```
@@ -65,7 +67,7 @@ Result: `{"hash":"0x…","chainId":1}`
 ### Sign a message (personal_sign)
 
 ```json
-{ "label": "Sign in to Example", "chainId": 1, "message": "I authorize login at 2026-06-24" }
+{ "chainId": 1, "message": "I authorize login at 2026-06-24" }
 ```
 
 Result: `{"signature":"0x…","chainId":1}`
@@ -73,7 +75,7 @@ Result: `{"signature":"0x…","chainId":1}`
 ### Sign EIP-712 typed data
 
 ```json
-{ "label": "Approve Permit2", "chainId": 1,
+{ "chainId": 1,
   "typedData": { "domain": {"name":"...","version":"1","chainId":1,"verifyingContract":"0x..."},
                  "types": {"Permit":[{"name":"owner","type":"address"}]},
                  "primaryType": "Permit", "message": {"owner":"0x..."} } }
@@ -111,8 +113,9 @@ needs another device; the default local flow has zero tunnel overhead.
 
 ## Good defaults
 
-- Put the human-meaningful intent in `label`/`description` — it's the only thing
-  the user reads before approving, so make it accurate.
+- The user sees a plain-English summary derived from the transaction data and
+  confirms in their own wallet — so correctness of `to`/`data`/`value`/`chainId`
+  is what matters.
 - One request = one signature. For a multi-step flow (e.g. approve then swap),
   call the tool once per step and check each result before continuing.
 - Don't fabricate gas/fee values; omit them and let the wallet/page estimate.

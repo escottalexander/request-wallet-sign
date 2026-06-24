@@ -41,20 +41,20 @@ Operation type is inferred from the JSON shape (no `type` field). Priority: `typ
 
 ```jsonc
 // eth_sendTransaction
-{ "label": "Send funds", "description": "…", "chainId": 1,
+{ "chainId": 1,
   "to": "0x…", "data": "0x…", "value": "0x0",
   "gas": "0x…", "maxFeePerGas": "0x…", "maxPriorityFeePerGas": "0x…" }
 
 // eth_signTypedData_v4
-{ "label": "…", "chainId": 1, "typedData": { "domain": {}, "types": {}, "primaryType": "…", "message": {} } }
+{ "chainId": 1, "typedData": { "domain": {}, "types": {}, "primaryType": "…", "message": {} } }
 
 // personal_sign
-{ "label": "…", "chainId": 1, "message": "I authorize this" }
+{ "chainId": 1, "message": "I authorize this" }
 ```
 
 - `to` omitted → contract deployment. `value` defaults to `"0x0"`.
 - `gas` / `maxFeePerGas` / `maxPriorityFeePerGas` optional — estimated browser-side (EIP-1559 / type-2 only). Fee estimation degrades gracefully if the wallet's RPC lacks `eth_maxPriorityFeePerGas`.
-- `label` / `description` optional but recommended — shown to the user.
+- The page shows the user a plain-English summary **derived from the transaction data itself** (ERC-7730 clear signing where available, otherwise decoded function + token info) — the requester cannot supply or override this text. Always confirm in your wallet.
 
 ## Behavior
 
