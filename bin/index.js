@@ -5,7 +5,10 @@
 // Parse CLI options (flags) from argv, separate from the request JSON.
 export function parseOptions(argv) {
   const args = argv.slice(2);
-  return { tunnel: args.includes('--tunnel') };
+  return {
+    tunnel: args.includes('--tunnel'),
+    stopTunnel: args.includes('--stop-tunnel'),
+  };
 }
 
 export function parseRequest(argv) {

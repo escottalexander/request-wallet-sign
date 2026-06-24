@@ -94,3 +94,8 @@ test('parseOptions detects --tunnel flag', () => {
 test('parseOptions defaults tunnel to false', () => {
   assert.equal(parseOptions(['node', 's', '{}']).tunnel, false);
 });
+
+test('parseOptions detects --stop-tunnel flag', () => {
+  assert.equal(parseOptions(['node', 's', '--stop-tunnel']).stopTunnel, true);
+  assert.equal(parseOptions(['node', 's', '{}']).stopTunnel, false);
+});
