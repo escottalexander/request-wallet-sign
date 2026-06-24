@@ -486,8 +486,7 @@ export function buildHtml(req, port, networkUrl, opts = {}) {
       <h1 id="headline">Review transaction</h1>
       <button class="icon-btn" id="copy-all-btn" title="Copy full transaction data">⧉ Copy all</button>
     </div>
-    <div id="what" class="decode" style="display:none"></div>
-    <div class="summary" id="summary"></div>
+    <div id="what" class="summary" style="display:none"></div>
     <button id="btn">Connect Wallet</button>
   </div>
 
@@ -544,7 +543,6 @@ ${DECODE_HELPERS_JS}
 // ── Helpers ────────────────────────────────────────────────────────────────
 const setState = s => { document.body.dataset.state = s; };
 const hex = n  => '0x' + n.toString(16);
-const trunc = a => a ? a.slice(0, 6) + '…' + a.slice(-4) : '—';
 
 // Copy text to clipboard, with a fallback for insecure (plain http/LAN) contexts
 // where navigator.clipboard is unavailable. Flashes "✓ Copied" on the button.
@@ -598,37 +596,6 @@ function txDataText() {
 }
 
 // ── Summary table ──────────────────────────────────────────────────────────
-function renderSummary() {
-  const meta = CHAIN_META[REQUEST.chainId] || {};
-  const chainName = meta.name || \`Chain \${REQUEST.chainId}\`;
-  const symbol = meta.symbol || 'ETH';
-  const rows = [{ label: 'Chain', value: chainName }];
-  if (REQUEST._type === 'sendTransaction') {
-    if (REQUEST.to) {
-      rows.push({ label: 'To', value: trunc(REQUEST.to), copy: REQUEST.to });
-    } else {
-      rows.push({ label: 'To', value: 'Contract deployment' });
-    }
-    const val = BigInt(REQUEST.value || '0x0');
-    if (val > 0n) rows.push({ label: 'Value', value: \`\${formatEther(REQUEST.value)} \${symbol}\` });
-    if (REQUEST.gas) rows.push({ label: 'Gas limit', value: Number(BigInt(REQUEST.gas)).toLocaleString() });
-  } else if (REQUEST._type === 'signTypedData') {
-    rows.push({ label: 'Type', value: REQUEST.typedData?.primaryType || '—' });
-  } else {
-    rows.push({ label: 'Type', value: 'personal_sign' });
-  }
-  document.getElementById('summary').innerHTML = rows
-    .map(r => \`<div class="row"><span class="row-label">\${r.label}</span>\` +
-      (r.copy
-        ? \`<span class="row-value copyable" data-copy="\${r.copy}" title="Click to copy">\${r.value}</span>\`
-        : \`<span class="row-value">\${r.value}</span>\`) +
-      \`</div>\`)
-    .join('');
-  document.querySelectorAll('#summary .copyable').forEach(el => {
-    el.addEventListener('click', () => copyText(el.dataset.copy, null));
-  });
-}
-
 // ── Post result back to CLI ────────────────────────────────────────────────
 async function postResult(data) {
   await fetch(RESULT_URL, {
@@ -814,14 +781,28 @@ async function sign(account) {
 // final backstop.
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// Single combined section: headline (the plain-English action) on top, then one
+// detail table — Chain once, recipient once (copyable), amount once, danger
+// flags, and gas if explicitly provided. No duplicated rows.
 function showWhat(title, fields) {
   if (title) document.getElementById('headline').textContent = title;
+  const meta = CHAIN_META[REQUEST.chainId] || {};
+  const rows = [{ label: 'Chain', value: meta.name || ('Chain ' + REQUEST.chainId) }, ...fields];
+  if (REQUEST._type === 'sendTransaction' && REQUEST.gas)
+    rows.push({ label: 'Gas limit', value: Number(BigInt(REQUEST.gas)).toLocaleString() });
+  const isAddr = v => /^0x[0-9a-fA-F]{40}$/.test(String(v));
   const el = document.getElementById('what');
   el.style.display = 'block';
-  el.innerHTML = fields.map(f =>
-    \`<div class="decode-row"><span class="decode-key">\${esc(f.label)}</span>\` +
-    \`<span class="decode-val" style="\${f.danger ? 'color:#fca5a5' : ''}">\${esc(f.value)}</span></div>\`
-  ).join('');
+  el.innerHTML = rows.map(f => {
+    const addr = isAddr(f.value);
+    const disp = addr ? awsTrunc(String(f.value)) : String(f.value);
+    const attrs = 'class="decode-val' + (addr ? ' copyable' : '') + '"' +
+      (addr ? ' data-copy="' + esc(String(f.value)) + '" title="Click to copy"' : '') +
+      (f.danger ? ' style="color:#fca5a5"' : '');
+    return '<div class="decode-row"><span class="decode-key">' + esc(f.label) + '</span>' +
+           '<span ' + attrs + '>' + esc(disp) + '</span></div>';
+  }).join('');
+  el.querySelectorAll('.copyable').forEach(c => c.addEventListener('click', () => copyText(c.dataset.copy, null)));
 }
 
 async function resolveSignature(selector) {
@@ -1028,7 +1009,6 @@ if (AUTO_TUNNEL) startTunnel();
 if (!window.ethereum) {
   setState('no-wallet');
 } else {
-  renderSummary();
   renderWhatThisDoes().catch(() => {});
   document.getElementById('btn').addEventListener('click', onConnect);
   document.getElementById('retry-btn').addEventListener('click', () => {
