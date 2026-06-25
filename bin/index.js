@@ -8,14 +8,43 @@ export function parseOptions(argv) {
   return {
     tunnel: args.includes('--tunnel'),
     stopTunnel: args.includes('--stop-tunnel'),
+    timeoutMs: parseTimeoutMs(args),
   };
 }
 
+// Extract the --timeout value (in seconds) from args, in either `--timeout=120`
+// or `--timeout 120` form, and return it as milliseconds. Returns null when the
+// flag is absent (caller applies the default). Throws on a non-positive or
+// non-numeric value.
+function parseTimeoutMs(args) {
+  let raw;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--timeout') { raw = args[i + 1]; break; }
+    if (a.startsWith('--timeout=')) { raw = a.slice('--timeout='.length); break; }
+  }
+  if (raw === undefined) return null;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`--timeout must be a positive number of seconds (got "${raw}")`);
+  }
+  return seconds * 1000;
+}
+
 export function parseRequest(argv) {
-  // The request JSON is the first argument that isn't a --flag.
-  const raw = argv.slice(2).find(a => !a.startsWith('--'));
+  // The request JSON is the first argument that isn't a --flag. Skip the value
+  // that follows a space-form `--timeout <seconds>` so it isn't mistaken for it.
+  const rest = argv.slice(2);
+  let raw;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--timeout') { i++; continue; } // skip its value token
+    if (a.startsWith('--')) continue;
+    raw = a;
+    break;
+  }
   if (!raw) {
-    throw new Error("Usage: request-wallet-sign [--tunnel] '<request JSON>'");
+    throw new Error("Usage: request-wallet-sign [--tunnel] [--timeout <seconds>] '<request JSON>'");
   }
 
   let parsed;
@@ -1083,17 +1112,20 @@ const PREFERRED_PORT = 8456; // stable port enables cloudflared tunnel reuse acr
 export const HELP_TEXT = `request-wallet-sign — surface a wallet signing request to a user via a browser page
 
 USAGE
-  npx request-wallet-sign [--tunnel] '<request JSON>'
+  npx request-wallet-sign [--tunnel] [--timeout <seconds>] '<request JSON>'
   npx request-wallet-sign --stop-tunnel
 
 OPTIONS
-  --tunnel       Pre-start the cross-device HTTPS tunnel as soon as the page
-                 loads. Otherwise the tunnel starts when you click "Sign on
-                 another device" in the page. Cross-device signing needs this
-                 HTTPS tunnel because mobile wallets only inject a provider
-                 over HTTPS — a plain http://LAN-IP address will not work.
-  --stop-tunnel  Tear down the shared background cloudflared tunnel and exit.
-  --help, -h     Show this help.
+  --tunnel           Pre-start the cross-device HTTPS tunnel as soon as the page
+                     loads. Otherwise the tunnel starts when you click "Sign on
+                     another device" in the page. Cross-device signing needs this
+                     HTTPS tunnel because mobile wallets only inject a provider
+                     over HTTPS — a plain http://LAN-IP address will not work.
+  --timeout <secs>   How long to wait for the user before giving up, in seconds
+                     (default 300 = 5 minutes). Accepts --timeout 600 or
+                     --timeout=600. Raise it when the user may take a while.
+  --stop-tunnel      Tear down the shared background cloudflared tunnel and exit.
+  --help, -h         Show this help.
 
 The request JSON is a single argument. Operation type is inferred:
   typedData → eth_signTypedData_v4 · message → personal_sign · otherwise → eth_sendTransaction
@@ -1104,7 +1136,7 @@ many tunnels. The shared tunnel is one background process, reaped after 10
 minutes idle or immediately with --stop-tunnel.
 
 On success prints {"hash"|"signature", "chainId"} to stdout and exits 0.
-On rejection / no wallet / 5-min timeout prints to stderr and exits 1.
+On rejection / no wallet / timeout prints to stderr and exits 1.
 `;
 
 export async function run(argv) {
@@ -1113,7 +1145,13 @@ export async function run(argv) {
     process.exit(0);
   }
 
-  const opts = parseOptions(argv);
+  let opts;
+  try {
+    opts = parseOptions(argv);
+  } catch (e) {
+    process.stderr.write(e.message + '\n');
+    process.exit(1);
+  }
 
   if (opts.stopTunnel) {
     const url = stopTunnel();
@@ -1137,11 +1175,12 @@ export async function run(argv) {
   const html = buildHtml(req, port, networkUrl, { autoTunnel: opts.tunnel });
   const { result, close } = startServer(port, html, tunnel);
 
+  const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
   const timeout = setTimeout(() => {
     close();
-    process.stderr.write('timeout: user did not respond\n');
+    process.stderr.write(`timeout: user did not respond within ${Math.round(timeoutMs / 1000)}s\n`);
     process.exit(1);
-  }, TIMEOUT_MS);
+  }, timeoutMs);
 
   if (networkUrl) process.stderr.write(`same-network URL: ${networkUrl}\n`);
   process.stderr.write('cross-device: use the "Sign on another device" button in the page\n');

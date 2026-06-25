@@ -11,13 +11,18 @@ npx request-wallet-sign '<request JSON>'
 ```
 
 ```bash
+# Wait longer than the default 5 minutes for the user to act:
+npx request-wallet-sign --timeout 900 '<request JSON>'   # seconds
+```
+
+```bash
 # Sign from another device (phone, tablet, another computer):
 # Click the "📱 Sign on another device" button in the page, or pre-start the
 # tunnel on page load with --tunnel:
 npx request-wallet-sign --tunnel '<request JSON>'
 ```
 
-On success, prints `{"hash":"0x…","chainId":N}` (or `{"signature":"0x…","chainId":N}`) to stdout and exits 0. On rejection, missing wallet, or a 5-minute timeout, prints to stderr and exits 1.
+On success, prints `{"hash":"0x…","chainId":N}` (or `{"signature":"0x…","chainId":N}`) to stdout and exits 0. On rejection, missing wallet, or timeout (5 minutes by default, configurable with `--timeout <seconds>`), prints to stderr and exits 1.
 
 ## Signing on another device
 
@@ -61,7 +66,7 @@ Operation type is inferred from the JSON shape (no `type` field). Priority: `typ
 - Browser opens automatically on the machine running the command.
 - The page shows a transaction summary (chain name, recipient, value in ETH), decoded calldata (best-effort via whatsabi), and copy buttons (copy recipient, copy network/tunnel URL, copy full tx data).
 - On success the tab attempts to auto-close.
-- 5-minute timeout, measured from launch.
+- Timeout measured from launch — 5 minutes by default, set with `--timeout <seconds>`.
 
 ## Run the tests
 

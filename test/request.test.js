@@ -98,6 +98,33 @@ test('parseOptions detects --stop-tunnel flag', () => {
   assert.equal(parseOptions(['node', 's', '{}']).stopTunnel, false);
 });
 
+test('parseOptions parses --timeout in seconds (equals form)', () => {
+  assert.equal(parseOptions(['node', 's', '--timeout=120', '{}']).timeoutMs, 120000);
+});
+
+test('parseOptions parses --timeout in seconds (space form)', () => {
+  assert.equal(parseOptions(['node', 's', '--timeout', '90', '{}']).timeoutMs, 90000);
+});
+
+test('parseOptions defaults timeoutMs to null when --timeout absent', () => {
+  assert.equal(parseOptions(['node', 's', '{}']).timeoutMs, null);
+});
+
+test('parseOptions rejects a non-numeric --timeout', () => {
+  assert.throws(() => parseOptions(['node', 's', '--timeout', 'abc', '{}']), /--timeout/);
+});
+
+test('parseOptions rejects a non-positive --timeout', () => {
+  assert.throws(() => parseOptions(['node', 's', '--timeout', '0', '{}']), /--timeout/);
+  assert.throws(() => parseOptions(['node', 's', '--timeout=-5', '{}']), /--timeout/);
+});
+
+test('parseRequest ignores the --timeout value in space form', () => {
+  const req = parseRequest(['n', 's', '--timeout', '120', JSON.stringify({ chainId: 1, to: '0xabc' })]);
+  assert.equal(req._type, 'sendTransaction');
+  assert.equal(req.chainId, 1);
+});
+
 test('parseRequest preserves an EIP-7702 authorizationList', () => {
   const auth = [{ chainId: 1, address: '0xdele', nonce: 0, yParity: 0, r: '0x', s: '0x' }];
   const req = parseRequest(['n', 's', JSON.stringify({ chainId: 1, to: '0xabc', authorizationList: auth })]);

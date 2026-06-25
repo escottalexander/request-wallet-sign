@@ -29,9 +29,20 @@ npx request-wallet-sign '<request JSON>'
 
 `npx` fetches the package automatically — no install step.
 
-The command **blocks until the user acts** (or a 5-minute timeout). On success it
-prints one line of JSON to stdout and exits `0`. On rejection / no wallet /
-timeout / bad input it prints a message to stderr and exits `1`.
+The command **blocks until the user acts** (or a timeout — 5 minutes by
+default). On success it prints one line of JSON to stdout and exits `0`. On
+rejection / no wallet / timeout / bad input it prints a message to stderr and
+exits `1`.
+
+To give the user more (or less) time, pass `--timeout <seconds>`:
+
+```bash
+npx request-wallet-sign --timeout 900 '<request JSON>'   # wait 15 minutes
+```
+
+Raise it when the user may be slow to respond (e.g. they need to fetch a
+hardware wallet or sign on another device); the default of 300 seconds is fine
+for a quick approval.
 
 ## Build the request
 
